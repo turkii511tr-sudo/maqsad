@@ -59,7 +59,7 @@ function makeReply(role, officeFal) {
   return { reply, calls };
 }
 
-const KUFI = fs.readFileSync('/home/claude/maqsad-site/tools/readex-pro-arabic.woff2');
+const KUFI = fs.readFileSync(require('path').join(__dirname, '../../site/tools/readex-pro-arabic.woff2'));
 const NASKH = fs.readFileSync('/usr/share/fonts/truetype/freefont/FreeSerif.ttf');
 const FONT_CSS = "@font-face{font-family:'IBM Plex Sans Arabic';font-weight:400 700;src:url(https://fonts.gstatic.com/k.woff2) format('woff2')}";
 
@@ -77,7 +77,7 @@ async function page(b, { role, officeFal, dark = false, width = 400 }) {
     const body = JSON.parse(route.request().postData() || '{}');
     await route.fulfill({ status:200, contentType:'application/json', headers:{'access-control-allow-origin':'*'}, body: JSON.stringify(api.reply(body.action, body)) });
   });
-  await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+  await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
   await p.waitForSelector('#app:not([hidden])'); await p.waitForTimeout(500);
   return { p, ctx, errors, calls: api.calls };
 }

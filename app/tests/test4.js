@@ -72,7 +72,7 @@ const check = (name, cond, extra) => { R[name] = !!cond; if (!cond) fails.push(n
       const body = JSON.parse(route.request().postData() || '{}');
       await route.fulfill({ status:200, contentType:'application/json', headers:{'access-control-allow-origin':'*'}, body: JSON.stringify(reply(body.action, body, role)) });
     });
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     await p.waitForSelector('#app:not([hidden])'); await p.waitForTimeout(700);
     return { ctx, p };
   }

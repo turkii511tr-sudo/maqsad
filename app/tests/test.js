@@ -85,7 +85,7 @@ function reply(action, body) {
         headers:{'access-control-allow-origin':'*'}, body: JSON.stringify(reply(body.action, body)) });
     });
 
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     await p.waitForSelector('#app:not([hidden])', { timeout:10000 });
     await p.waitForTimeout(500);
 
@@ -151,7 +151,7 @@ function reply(action, body) {
   const ctx2 = await b.newContext({ viewport:{ width:400, height:840 } });
   const p2 = await ctx2.newPage();
   p2.on('pageerror', e => errs.push('auth PAGEERROR: ' + e.message));
-  await p2.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+  await p2.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
   await p2.waitForTimeout(600);
   results.auth = {
     authVisible: await p2.$eval('#auth', n => !n.hidden),

@@ -51,7 +51,7 @@ const check = (n, c, x) => { R[n] = !!c; if (!c) fails.push(n + (x ? ' — ' + x
       }
       await route.fulfill({ status:code, contentType:'application/json', headers:{'access-control-allow-origin':'*'}, body: JSON.stringify(res) });
     });
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     await p.waitForSelector('#app:not([hidden])'); await p.waitForTimeout(600);
     return { ctx, p, calls, st };
   }

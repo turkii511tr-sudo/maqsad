@@ -31,7 +31,7 @@ function reply(action, body, role) {
 }
 
 const fs = require('fs');
-const KUFI = fs.readFileSync('/home/claude/maqsad-site/tools/readex-pro-arabic.woff2');
+const KUFI = fs.readFileSync(require('path').join(__dirname, '../../site/tools/readex-pro-arabic.woff2'));
 const NASKH = fs.readFileSync('/usr/share/fonts/truetype/freefont/FreeSerif.ttf');
 const FONT_CSS = "@font-face{font-family:'Reem Kufi';font-weight:400 700;src:url(https://fonts.gstatic.com/k.woff2) format('woff2')}" +
   "@font-face{font-family:'Markazi Text';font-weight:400 700;src:url(https://fonts.gstatic.com/n.ttf) format('truetype')}";
@@ -48,7 +48,7 @@ const FONT_CSS = "@font-face{font-family:'Reem Kufi';font-weight:400 700;src:url
       const body = JSON.parse(route.request().postData() || '{}');
       await route.fulfill({ status:200, contentType:'application/json', headers:{'access-control-allow-origin':'*'}, body: JSON.stringify(reply(body.action, body, 'super_admin')) });
     });
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     await p.waitForSelector('#app:not([hidden])'); await p.waitForTimeout(600);
     await p.click('.nav button[data-screen="s-offices"]'); await p.waitForTimeout(300);
     await p.click('#officesList .row .btn:has-text("تعديل")');

@@ -81,7 +81,7 @@ function reply(action, body, role) {
       await route.fulfill({ status:200, contentType:'application/json', headers:{'access-control-allow-origin':'*'},
         body: JSON.stringify(reply(body.action, body, role)) });
     });
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     await p.waitForSelector('#app:not([hidden])', { timeout:10000 });
     await p.waitForTimeout(600);
     return { ctx, p };

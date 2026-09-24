@@ -2,11 +2,16 @@
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const require = createRequire(import.meta.url);
-const ts = require("/home/claude/.npm-global/lib/node_modules/typescript");
+// typescript من المشروع أو من التثبيت العام (npm i -g typescript)
+const ts = (() => { try { return require("typescript"); } catch { return require(execSync("npm root -g").toString().trim() + "/typescript"); } })();
 const src = readFileSync(new URL("../functions/_shared/notify.ts", import.meta.url), "utf8");
-mkdirSync("/tmp/claude-fn-test", { recursive: true });
-const f = "/tmp/claude-fn-test/notify-" + Date.now() + ".mjs";
+const dir = join(tmpdir(), "maqsad-fn-test");
+mkdirSync(dir, { recursive: true });
+const f = join(dir, "notify-" + Date.now() + ".mjs");
 writeFileSync(f, ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
 const N = await import(pathToFileURL(f).href);
 

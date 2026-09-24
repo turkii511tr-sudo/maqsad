@@ -11,7 +11,7 @@ const T = require('./test-data.js');
       const body = JSON.parse(route.request().postData()||'{}');
       await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(T.reply(body.action,body))});
     });
-    await p.goto('file://'+path.join(__dirname,'dist','app.html'));
+    await p.goto('file://'+path.join(__dirname,'..','dist','app.html'));
     await p.waitForSelector('#app:not([hidden])');
     await p.waitForTimeout(600);
     await p.screenshot({ path:`s-${vp.tag}.png` });

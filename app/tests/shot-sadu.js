@@ -4,7 +4,7 @@ const path = require('path'), fs = require('fs');
 const T = require('./test-data.js');
 const OUT = process.argv[2] || '/tmp/app-shots';
 fs.mkdirSync(OUT, { recursive: true });
-const KUFI = fs.readFileSync('/home/claude/maqsad-site/tools/readex-pro-arabic.woff2');
+const KUFI = fs.readFileSync(require('path').join(__dirname, '../../site/tools/readex-pro-arabic.woff2'));
 const NASKH = fs.readFileSync('/usr/share/fonts/truetype/freefont/FreeSerif.ttf');
 const FONT_CSS = "@font-face{font-family:'Reem Kufi';font-weight:400 700;src:url(https://fonts.gstatic.com/k.woff2) format('woff2')}" +
   "@font-face{font-family:'Markazi Text';font-weight:400 700;src:url(https://fonts.gstatic.com/n.ttf) format('truetype')}";
@@ -37,7 +37,7 @@ async function fonts(p) {
       const body = JSON.parse(route.request().postData() || '{}');
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(T.reply(body.action, body)) });
     });
-    await p.goto('file://' + path.join(__dirname, 'dist', 'app.html'));
+    await p.goto('file://' + path.join(__dirname, '..', 'dist', 'app.html'));
     if (s.auth) { await p.waitForSelector('#auth'); await p.waitForTimeout(500); }
     else {
       await p.waitForSelector('#app:not([hidden])'); await p.waitForTimeout(500);

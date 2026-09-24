@@ -9,7 +9,7 @@ import art, sadu
 
 ROOT = Path(__file__).resolve().parent.parent
 IMG = ROOT / "src" / "assets" / "img"
-PWA = Path("/home/claude/pwa")
+PWA = ROOT.parent / "pwa"
 IMG.mkdir(parents=True, exist_ok=True)
 T = ROOT / "tools"
 

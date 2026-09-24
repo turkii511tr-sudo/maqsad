@@ -4,9 +4,13 @@ import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createHmac, randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const ts = require("/home/claude/.npm-global/lib/node_modules/typescript");
+// typescript من المشروع أو من التثبيت العام (npm i -g typescript)
+const ts = (() => { try { return require("typescript"); } catch { return require(execSync("npm root -g").toString().trim() + "/typescript"); } })();
 
 export function makeDb(seed) {
   const T = structuredClone(seed);
@@ -150,8 +154,9 @@ export async function loadFunction(tsPath, db, fetchImpl) {
     .replace(/import \{[^}]*\} from "\.\/notify\.ts";/, () =>
       readFileSync(new URL("../functions/_shared/notify.ts", import.meta.url), "utf8").replace(/^export /gm, ""));
   const out = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-  mkdirSync("/tmp/claude-fn-test", { recursive: true });
-  const file = `/tmp/claude-fn-test/fn-${randomUUID()}.mjs`;
+  const dir = join(tmpdir(), "maqsad-fn-test");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `fn-${randomUUID()}.mjs`);
   writeFileSync(file, out);
   let handler = null;
   const pending = [];
