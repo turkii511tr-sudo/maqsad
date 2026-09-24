@@ -94,6 +94,18 @@ export function makeDb(seed) {
     return [{ customer_id: c.id, owns_lock: free, is_duplicate: false }];
   };
   rpcs.finish_processing = (a) => { const c = T.customers.find((r) => r.id === a.p_customer); if (c) { c.buffer = ""; c.locked_until = null; } return null; };
+  // نفس منطق finish_turn في القاعدة: يمسح ما عولج فقط ويعيد ما وصل أثناء المعالجة
+  rpcs.finish_turn = (a) => {
+    const c = T.customers.find((r) => r.id === a.p_customer);
+    if (!c) return "";
+    const b = c.buffer ?? "", k = a.p_consumed ?? "";
+    if (k && b !== k && !b.startsWith(k + "\n")) { (T.__finishTurn ??= []).push({ consumed: k, left: "", foreign: true }); return ""; }
+    const left = !k ? b : b === k ? "" : b.slice(k.length + 1);
+    c.buffer = left;
+    c.locked_until = left ? Date.now() + 90_000 : null;
+    (T.__finishTurn ??= []).push({ consumed: k, left });
+    return left;
+  };
   rpcs.match_properties = () => T.__matches ?? [];
   // عدّادات الاستهلاك والإحصاءات: نسجّل النداء ونعيد ما يحدده الاختبار
   rpcs.bump_usage = (a) => { (T.__usage ??= []).push(a); return null; };

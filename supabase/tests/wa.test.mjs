@@ -562,6 +562,90 @@ await test("بلا مفاتيح إشعارات: تيليجرام يشتغل عا
   assert.equal(sent(x.f, "fcm.googleapis.com").length, 0);
 });
 
+// ---------- رسائل تصل أثناء المعالجة (C1) ----------
+// محاكاة واقعية: العميل يرسل رسالة جديدة بينما الذكاء يفكر في رسالته السابقة
+function raceSetup(phone, injectOn) {
+  const { T, client } = makeDb(seed);
+  let n = 0;
+  const f = makeFetch((body) => {
+    n++;
+    const extra = injectOn(n);
+    if (extra) client.rpc("ingest_message", {
+      p_office: "o1", p_wa_id: phone + "@c.us", p_phone: phone, p_name: "",
+      p_msg_id: crypto.randomUUID(), p_body: extra, p_lock_sec: 90,
+    });
+    return { reply: `رد رقم ${n}`, status: "استفسار عام", mode: "آلي", summary: "عميل جديد" };
+  });
+  return { T, client, f, aiCalls: () => n };
+}
+const aiUserText = (f, i) => sent(f, "api.openai.com")[i].body.messages.at(-1).content;
+
+await test("رسالة تصل أثناء تفكير الذكاء لا تضيع: يُرد عليها في دورة ثانية", async () => {
+  const x = raceSetup("966500000081", (n) => n === 1 ? "بالنرجس ٣ غرف ميزانيتي ٤٠ الف" : null);
+  const { handler } = await loadFunction(FN, x.client, x.f);
+  await handler(ultra("966500000081", "ابي شقة للإيجار"));
+  assert.equal(x.aiCalls(), 2, "الذكاء لم يُسأل عن الرسالة الثانية");
+  assert.ok(aiUserText(x.f, 0).includes("ابي شقة للإيجار"));
+  assert.ok(aiUserText(x.f, 1).includes("بالنرجس ٣ غرف"), "الدورة الثانية لم تحمل الرسالة الجديدة");
+  assert.ok(!aiUserText(x.f, 1).includes("ابي شقة للإيجار"), "الدورة الثانية أعادت الرسالة الأولى");
+  assert.equal(waSent(x.f).length, 2, "المتوقع ردّان");
+  const c = x.T.customers[0];
+  assert.equal(c.buffer, ""); assert.equal(c.locked_until, null);
+  assert.equal(x.T.messages.filter((m) => m.direction === "in").length, 1, "رسالة الحقن تُحفظ عبر مسار الاستقبال لا هنا");
+});
+
+await test("بلا رسائل جديدة: دورة واحدة فقط ويُفك القفل", async () => {
+  const x = raceSetup("966500000082", () => null);
+  const { handler } = await loadFunction(FN, x.client, x.f);
+  await handler(ultra("966500000082", "السلام عليكم"));
+  assert.equal(x.aiCalls(), 1);
+  assert.equal(x.T.__finishTurn.length, 1);
+  assert.equal(x.T.__finishTurn[0].left, "");
+  assert.equal(x.T.customers[0].locked_until, null);
+});
+
+await test("رسائل متواصلة بلا توقف: لا حلقة لا نهائية، والنص الأخير يبقى للرسالة القادمة", async () => {
+  const x = raceSetup("966500000083", (n) => `رسالة إضافية ${n}`);
+  const { handler } = await loadFunction(FN, x.client, x.f);
+  await handler(ultra("966500000083", "مرحبا"));
+  assert.equal(x.aiCalls(), 4, "الحد الأقصى ٤ دورات");
+  const c = x.T.customers[0];
+  assert.equal(c.locked_until, null, "القفل لازم يُفك بعد الحد");
+  assert.equal(c.buffer, "رسالة إضافية 4", "آخر نص لم يُرد عليه يبقى في المخزن");
+  assert.ok(x.T.events.some((e) => e.kind === "turn_rounds_exceeded"));
+});
+
+await test("لو تعطلت finish_turn: يُفك القفل بالطريقة القديمة ولا يعلق العميل", async () => {
+  const x = raceSetup("966500000084", () => null);
+  const rpc = x.client.rpc;
+  x.client.rpc = async (name, args) => name === "finish_turn" ? { data: null, error: { message: "missing function" } } : rpc(name, args);
+  const { handler } = await loadFunction(FN, x.client, x.f);
+  await handler(ultra("966500000084", "السلام عليكم"));
+  const c = x.T.customers[0];
+  assert.equal(c.locked_until, null); assert.equal(c.buffer, "");
+  assert.ok(x.T.events.some((e) => e.kind === "finish_turn_failed"));
+});
+
+await test("رسالة تصل أثناء تسليم العميل للموظف: البوت يبقى صامتاً في الدورة الثانية", async () => {
+  const x = raceSetup("966500000085", (n) => n === 1 ? "ابي اكلم موظف" : null);
+  const { handler } = await loadFunction(FN, x.client, x.f);
+  await handler(ultra("966500000085", "ابي فيلا للشراء"));
+  // الدورة الثانية تكشف طلب الموظف بالكلمات قبل الذكاء: تحويل بلا سؤال ثانٍ للذكاء
+  assert.equal(x.aiCalls(), 1);
+  const c = x.T.customers[0];
+  assert.equal(c.mode, "manual"); assert.equal(c.handoff_reason, "human");
+  assert.equal(c.buffer, ""); assert.equal(c.locked_until, null);
+});
+
+await test("معالج قديم ينهي متأخراً: لا يمسح رسالة أحدث عالجها غيره", async () => {
+  const { T, client } = makeDb(seed);
+  T.customers.push({ id: "c-late", office_id: "o1", wa_id: "x", phone: "x", buffer: "رسالة أحدث", locked_until: 123, recent_ids: [] });
+  const { data } = await client.rpc("finish_turn", { p_customer: "c-late", p_consumed: "رسالة قديمة" });
+  assert.equal(data, "");
+  assert.equal(T.customers[0].buffer, "رسالة أحدث");
+  assert.equal(T.customers[0].locked_until, 123, "القفل ليس له");
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

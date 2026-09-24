@@ -133,6 +133,39 @@ AS $function$
   update customers set buffer = '', locked_until = null where id = p_customer;
 $function$
 ;
+CREATE OR REPLACE FUNCTION public.finish_turn(p_customer uuid, p_consumed text)
+ RETURNS text
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_buf  text;
+  v_left text;
+begin
+  select buffer into v_buf from customers where id = p_customer for update;
+  if not found then
+    return '';
+  end if;
+
+  if coalesce(p_consumed, '') = '' then
+    v_left := v_buf;                                             -- لم يُعالج شيء: ما في المخزن كله للدورة التالية
+  elsif v_buf = p_consumed then
+    v_left := '';                                                -- عولج كل شيء
+  elsif starts_with(v_buf, p_consumed || E'\n') then
+    v_left := substr(v_buf, char_length(p_consumed) + 2);        -- عولج الأول، والباقي وصل أثناء المعالجة
+  else
+    return '';                                                   -- عالجه معالج آخر: لا نلمس المخزن ولا القفل
+  end if;
+
+  update customers
+     set buffer       = v_left,
+         locked_until = case when v_left <> '' then now() + interval '90 seconds' else null end
+   where id = p_customer;
+
+  return v_left;
+end
+$function$
+;
 CREATE OR REPLACE FUNCTION public.housekeeping()
  RETURNS void
  LANGUAGE plpgsql
@@ -422,6 +455,7 @@ grant execute on function demand_gap(uuid,integer) to public;
 grant execute on function demand_gap(uuid,integer) to service_role;
 grant execute on function finish_processing(uuid) to public;
 grant execute on function finish_processing(uuid) to service_role;
+grant execute on function finish_turn(uuid,text) to service_role;
 grant execute on function housekeeping() to service_role;
 grant execute on function ingest_message(uuid,text,text,text,text,text,integer) to public;
 grant execute on function ingest_message(uuid,text,text,text,text,text,integer) to service_role;
@@ -436,6 +470,7 @@ grant execute on function tg_register() to service_role;
 revoke all on function build_app() from public;
 revoke all on function bump_usage(uuid,integer,bigint,bigint,bigint,integer,integer,integer,integer,integer) from public;
 revoke all on function call_edge(text,jsonb) from public;
+revoke all on function finish_turn(uuid,text) from public;
 revoke all on function housekeeping() from public;
 revoke all on function mint_magic(uuid) from public;
 revoke all on function office_month_stats(uuid,timestamp with time zone,timestamp with time zone) from public;

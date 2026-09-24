@@ -1,4 +1,5 @@
-// مقصد — محرك استقبال واتساب (v4.6)
+// مقصد — محرك استقبال واتساب (v4.7)
+// v4.7: رسالة تصل أثناء الرد على ما قبلها لا تضيع — تبقى في المخزن ويُرد عليها في دورة تالية (finish_turn)
 // v4.6: التنبيهات على تيليجرام و/أو إشعارات الجوال حسب اختيار المكتب
 // v4.5: رخصة فال — المساعد ما يرد على عملاء مكتب لم يتحقق مشغّل المنصة من رخصته (يرد على موظفيه والمشغّل
 //       فقط للتجربة، وينبّه المكتب مرة كل ٦ ساعات)، وإذا انتهت الرخصة يكمل استقبال الطلبات بلا عرض عقارات
@@ -350,6 +351,9 @@ function commandOf(buffer: string): "delete" | "stop" | "start" | null {
 
 type Incoming = { waId: string; phone: string; name: string; msgId: string; body: string };
 
+// رسائل تصل أثناء الرد على ما قبلها: يُرد عليها في دورات متتالية بحد أقصى
+const MAX_ROUNDS = 4;
+
 // ===== المعالجة المشتركة لكل مزوّد =====
 async function processIncoming(office: any, m: Incoming) {
   const { waId, phone } = m;
@@ -389,17 +393,55 @@ async function processIncoming(office: any, m: Incoming) {
 
   if (!owns_lock) return { ok: true, buffered: true };
 
-  await sleep((office.debounce_seconds ?? 7) * 1000);
+  const debounce = Math.max(0, office.debounce_seconds ?? 7);
+  await sleep(debounce * 1000);
 
-  const { data: c } = await db.from("customers").select("*").eq("id", customer_id).single();
-  if (!c || !c.buffer) {
-    await db.rpc("finish_processing", { p_customer: customer_id });
+  // رسالة تصل أثناء الرد على ما قبلها لا تُمسح: تبقى في المخزن ويُرد عليها في الدورة التالية
+  let out: Record<string, unknown> = { ok: true };
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    const turn = { leftover: "" };
+    const r = await processTurn(office, m, customer_id, fal, tester, turn);
+    out = round === 1 ? r : { ...r, round };
+    if (!turn.leftover) return out;
+    // ننتظر قليلاً ليكمل العميل كتابته ثم نرد على الجديد
+    if (round < MAX_ROUNDS) await sleep(Math.min(3, debounce) * 1000);
+  }
+  // دورات كثيرة متتالية: نفك القفل ونُبقي النص، وأول رسالة قادمة تكمل عليه
+  await db.from("customers").update({ locked_until: null }).eq("id", customer_id);
+  await logEvent(office.id, "warn", "turn_rounds_exceeded", { customer: customer_id });
+  return out;
+}
+
+// ===== دورة رد واحدة: تقرأ المخزن وترد، ثم تمسح ما رُد عليه فقط =====
+async function processTurn(
+  office: any, m: Incoming, customer_id: string, fal: string, tester: boolean,
+  turn: { leftover: string },
+) {
+  const { waId, phone } = m;
+  const { data: c } = await db.from("customers").select("*").eq("id", customer_id).maybeSingle();
+  if (!c) return { ok: true, skipped: "customer gone" };
+  // نص هذه الدورة كما قُرئ الآن؛ أي رسالة تصل بعد هذه اللحظة تُعالج في الدورة التالية
+  const consumed = String(c.buffer ?? "");
+
+  // يمسح النص الذي عولج فقط؛ ما وصل أثناء المعالجة يرجع هنا ليُرد عليه في الدورة التالية
+  const finish = async () => {
+    const { data, error } = await db.rpc("finish_turn", { p_customer: customer_id, p_consumed: consumed });
+    if (error) {
+      await logEvent(office.id, "error", "finish_turn_failed", { error: String(error.message ?? error).slice(0, 200) });
+      await db.rpc("finish_processing", { p_customer: customer_id }); // احتياط: لا نترك القفل معلّقاً
+      turn.leftover = "";
+      return;
+    }
+    turn.leftover = String(data ?? "");
+  };
+
+  if (!consumed) {
+    await finish();
     return { ok: true, skipped: "empty buffer" };
   }
 
   const link = `https://wa.me/${phone}`;
   const last4 = phone.slice(-4);
-  const finish = async () => db.rpc("finish_processing", { p_customer: customer_id });
 
   let disclosed = !!c.disclosed_at;
   const say = async (text: string, mode: string, opts: { disclose?: "full" | "short" | false } = {}) => {
