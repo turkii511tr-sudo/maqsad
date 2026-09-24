@@ -1,0 +1,79 @@
+<!--page
+title: راسلنا | مقصد
+og_title: راسلنا — مقصد
+description: تواصل مع فريق مقصد: استفسار، دعم فني لمكتب مشترك، الاشتراك والفوترة، أو طلب يخص بياناتك الشخصية.
+path: /contact
+file: contact.html
+home: index.html
+-->
+<main id="main" class="doc-page">
+  <header class="doc-hero">
+    <div class="wrap">
+      <p class="eyebrow">تواصل</p>
+      <h1>راسلنا</h1>
+      <p class="doc-meta">نرد على كل رسالة. وطلبات البيانات الشخصية خلال ٣٠ يوماً كحد أقصى.</p>
+    </div>
+  </header>
+
+  <div class="wrap contact-in">
+    <div class="contact-copy">
+      <h2>قبل ما ترسل</h2>
+      <ul class="contact-tips">
+        <li><b>تبي تشغّل مقصد في مكتبك؟</b><span><a href="index.html#join">نموذج الانضمام</a> أسرع طريق.</span></li>
+        <li><b>أنت عميل لمكتب عقاري وتبي توقف الرسائل؟</b><span>اكتب «توقف» في محادثة المكتب نفسها، أو «احذف بياناتي» لحذف بياناتك فوراً.</span></li>
+        <li><b>طلب يخص بياناتك الشخصية؟</b><span>اختر «طلب يخص بياناتي الشخصية»، واذكر رقم الجوال المرتبط بالطلب. قد نطلب ما يثبت هويتك قبل التنفيذ.</span></li>
+      </ul>
+      <!--if:email--><p class="contact-mail">أو على البريد: <a class="ltr" href="mailto:{{email}}">{{email}}</a></p><!--/if:email-->
+    </div>
+
+    <div class="form-card">
+      <form class="form" id="contactForm" novalidate data-endpoint="{{contact_endpoint}}">
+        <div class="field">
+          <label for="cName">اسمك <span class="req" aria-hidden="true">*</span></label>
+          <input id="cName" name="name" class="input" autocomplete="name" maxlength="80" required>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label for="cPhone">جوالك</label>
+            <input id="cPhone" name="phone" class="input ltr" type="tel" inputmode="tel" autocomplete="tel" placeholder="05XXXXXXXX" maxlength="20" aria-describedby="cReachHint">
+          </div>
+          <div class="field">
+            <label for="cEmail">بريدك</label>
+            <input id="cEmail" name="email" class="input ltr" type="email" inputmode="email" autocomplete="email" maxlength="120" aria-describedby="cReachHint">
+          </div>
+        </div>
+        <p class="hint hint-row" id="cReachHint">يكفي واحد منهما — نرد عليك عليه.</p>
+        <div class="field">
+          <label for="cTopic">الموضوع <span class="req" aria-hidden="true">*</span></label>
+          <select id="cTopic" name="topic" class="input" required>
+            <option value="">اختر</option>
+            <option value="general">استفسار عام</option>
+            <option value="support">دعم فني لمكتب مشترك</option>
+            <option value="billing">الاشتراك والفوترة</option>
+            <option value="privacy">طلب يخص بياناتي الشخصية</option>
+            <option value="complaint">شكوى أو ملاحظة</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cMessage">رسالتك <span class="req" aria-hidden="true">*</span></label>
+          <textarea id="cMessage" name="message" class="input" rows="5" maxlength="1500" required></textarea>
+        </div>
+        <div class="hp" aria-hidden="true">
+          <label for="cWebsite">اتركه فارغاً</label>
+          <input id="cWebsite" name="website" tabindex="-1" autocomplete="off">
+        </div>
+        <label class="check" for="cConsent">
+          <input id="cConsent" name="consent" type="checkbox" required>
+          <span>أوافق على <a href="privacy.html">سياسة الخصوصية</a>، وعلى تواصلكم معي بخصوص هذه الرسالة.</span>
+        </label>
+        <button class="btn btn-block" type="submit">أرسل الرسالة</button>
+        <p class="form-msg" role="status" aria-live="polite"></p>
+      </form>
+      <div class="done" id="contactDone" hidden tabindex="-1">
+        <span class="done-seal" aria-hidden="true">{{icon:check}}</span>
+        <h3>وصلت رسالتك</h3>
+        <p>نرد عليك في أقرب وقت.</p>
+      </div>
+    </div>
+  </div>
+</main>

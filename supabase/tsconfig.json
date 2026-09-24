@@ -1,0 +1,1 @@
+{"compilerOptions": {"target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "strict": false, "noEmit": true, "lib": ["ES2022", "DOM"], "skipLibCheck": true, "allowImportingTsExtensions": true}, "files": ["shim.d.ts", "join/index.ts", "contact/index.ts", "backup/index.ts", "wa-webhook/index.ts", "api/index.ts", "monthly-report/index.ts", "fal-check/index.ts"]}

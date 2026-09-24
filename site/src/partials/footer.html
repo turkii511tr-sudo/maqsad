@@ -1,0 +1,42 @@
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="{{home}}" aria-label="مقصد — الصفحة الرئيسية">{{mono}}{{wordmark}}</a>
+        <p>كل عميل يكتب لك عنده مقصد — نستخرجه قبل ما يفوت.</p>
+      </div>
+      <nav class="foot-cols" aria-label="روابط التذييل">
+        <div>
+          <h2>المنتج</h2>
+          <ul>
+            <li><a href="{{home}}#how">كيف يشتغل</a></li>
+            <li><a href="{{home}}#features">وش يوصلك</a></li>
+            <li><a href="{{home}}#rules">الأنظمة</a></li>
+            <li><a href="{{home}}#faq">الأسئلة</a></li>
+            <li><a href="{{app_url}}">دخول المكاتب</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>السياسات</h2>
+          <ul>
+            <li><a href="privacy.html">سياسة الخصوصية</a></li>
+            <li><a href="terms.html">الشروط والأحكام</a></li>
+            <li><a href="refund.html">الاسترجاع والإلغاء</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>تواصل</h2>
+          <ul>
+            <li><a href="contact.html">راسلنا</a></li>
+            <!--if:email--><li><a class="ltr" href="mailto:{{email}}">{{email}}</a></li><!--/if:email-->
+            <li><a href="{{home}}#join">طلب انضمام مكتب</a></li>
+          </ul>
+        </div>
+      </nav>
+    </div>
+    <div class="foot-legal">
+      <p>© {{year_ar}} {{brand}}. جميع الحقوق محفوظة.</p>
+      <p class="foot-ids"><!--if:legal_name--><span>مشغّل الخدمة: {{legal_name}}</span><!--/if:legal_name--><!--if:cr_number--><span>السجل التجاري: <span class="ltr num">{{cr_number}}</span></span><!--/if:cr_number--><!--if:vat_number--><span>الرقم الضريبي: <span class="ltr num">{{vat_number}}</span></span><!--/if:vat_number--><!--if:address--><span>{{address}}</span><!--/if:address--><span>المملكة العربية السعودية</span></p>
+    </div>
+  </div>
+</footer>
