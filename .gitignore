@@ -10,6 +10,8 @@ node_modules/
 *.png.tmp
 shots/
 screenshots/
+/shot*.png
+app/tests/shot*.png
 
 # never commit secrets
 .env

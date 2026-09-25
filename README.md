@@ -17,6 +17,7 @@
 | `site/` | موقع maqsadapp.com (مولّد صفحات ثابتة بلغة Python) | Netlify |
 | `tools/deploy/` | أداة نشر واجهة التطبيق عبر SQL | — |
 | `docs/` | المفاتيح (أسماء فقط) وطريقة النشر | — |
+| `archive/` | أصل دوال قديمة أُوقفت (للرجوع فقط، لا تُنشر) | — |
 
 ## قواعد لا تُكسر
 
@@ -29,7 +30,7 @@
 تحتاج: Node 18 أو أحدث، Python 3، و`npm i -g typescript playwright`.
 
 ```bash
-node supabase/tests/api.test.mjs      # وكذلك wa / push / fal / backup / report / site
+node supabase/tests/api.test.mjs      # وكذلك wa / push / fal / backup / report / site / tg
 python3 app/build.py && node app/tests/test5.js   # واجهة التطبيق (Playwright)
 python3 site/build.py && node site/test/site.test.js
 ```
