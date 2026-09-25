@@ -1,4 +1,6 @@
-// مقصد — محرك استقبال واتساب (v4.8)
+// مقصد — محرك استقبال واتساب (v4.9)
+// v4.9: نموذج الذكاء يُختار من المفاتيح (AI_MODEL، مثل gpt-6-luna) بإعدادات نماذج التفكير، ومع تعطّله يرجع
+//       تلقائياً لـ gpt-4o-mini · الأرقام العربية في الميزانية تُقرأ صح · صور العقار يرسلها المستشار لا البوت
 // v4.8: الرسائل الصوتية تتحول نصاً ويرد عليها البوت (للمكاتب المذكورة في VOICE_OFFICES فقط، تجربة) —
 //       حد لطول الصوتية، وحد يومي لكل عميل وشهري لكل مكتب، ومن يتعداه يُسلَّم لموظف بلا رسالة «وصلت الحد»
 // v4.7: رسالة تصل أثناء الرد على ما قبلها لا تضيع — تبقى في المخزن ويُرد عليها في دورة تالية (finish_turn)
@@ -201,6 +203,7 @@ function systemPrompt(office: any, licensed = true) {
 ${intro}
 - رد السلام باختصار. سلام بلا طلب = ترحيب فقط، وممنوع ادعاء متابعة طلب.
 - رسالة إغلاق (تمام/شكرا/أوك/إيموجي فقط) = شكر قصير بلا أي سؤال.
+- إذا طلب العميل صور العقار أو فيديو: قل إن المستشار العقاري بيرسلها له بعد ما تكتمل تفاصيل طلبه، ولا تعد بإرسالها بنفسك.
 - الرسالة التي تبدأ بـ 🎤 نص محوّل آلياً من رسالة صوتية وقد يحتوي أخطاء. إذا كان الحي أو الميزانية فيها غير واضح، اسأل للتأكيد بدل التخمين.
 
 أولوية الأسئلة عند النقص (واحدة كل مرة):
@@ -269,21 +272,37 @@ ${c.buffer}
 ادمج الجديد مع المسجل، واعتمد القيمة الجديدة عند التعديل، ولا تخترع شيئاً.
 أعد حساب status من الصفر. أعد JSON فقط.`;
 
+  const messages = [
+    { role: "system", content: systemPrompt(office, falState(office) === "ok") },
+    { role: "user", content: user },
+  ];
+  const primary = s.AI_MODEL || FALLBACK_MODEL;
+  try {
+    return await callModel(office, key, primary, messages, s.AI_REASONING || "low");
+  } catch (e) {
+    if (primary === FALLBACK_MODEL) throw e;
+    // النموذج الجديد تعطّل: نكمل بالنموذج القديم بدل ما نسلّم العميل لموظف
+    await logEvent(office.id, "warn", "ai_fallback", { model: primary, error: String(e).slice(0, 300) });
+    return await callModel(office, key, FALLBACK_MODEL, messages, "");
+  }
+}
+
+// النموذج الاحتياطي المجرَّب. AI_MODEL في المفاتيح يحدد النموذج الأساسي (مثل gpt-6-luna)
+const FALLBACK_MODEL = "gpt-4o-mini";
+// نماذج التفكير لا تقبل max_tokens ولا temperature، وتحتاج مستوى تفكير
+const isReasoning = (m: string) => /^(gpt-6|gpt-5|o\d)/.test(m);
+
+async function callModel(office: any, key: string, model: string, messages: unknown[], effort: string) {
+  const params = isReasoning(model)
+    ? { max_completion_tokens: 1500, reasoning_effort: effort || "low" }
+    : { temperature: 0.2, max_tokens: 800 };
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      max_tokens: 800,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt(office, falState(office) === "ok") },
-        { role: "user", content: user },
-      ],
-    }),
+    body: JSON.stringify({ model, ...params, response_format: { type: "json_object" }, messages }),
+    signal: AbortSignal.timeout(25_000),
   });
-  if (!r.ok) throw new Error(`openai ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`openai ${model} ${r.status}: ${(await r.text()).slice(0, 300)}`);
   const j = await r.json();
   const u = j.usage ?? {};
   await bump(office.id, {
@@ -307,7 +326,12 @@ function formatProperties(rows: any[]) {
 }
 
 const num = (v: any) => {
-  const n = parseFloat(String(v ?? "").replace(/[^\d.]/g, ""));
+  // «٤٠٬٠٠٠» و«40,000» و«٤٠٠٠٠ ريال» كلها 40000
+  const t = String(v ?? "")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٬,]/g, "").replace(/٫/g, ".");
+  const n = parseFloat(t.replace(/[^\d.]/g, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 const clean = (v: any) => {

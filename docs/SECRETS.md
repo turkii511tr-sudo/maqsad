@@ -15,6 +15,8 @@
 | `OPERATOR_LINK_CODE` | رمز مؤقت لمرة وحدة لربط محادثة المشغّل (يُحذف تلقائياً بعد الربط أو الانتهاء) | tg |
 | `VOICE_OFFICES` | رموز المكاتب المفعّل لها تحويل الصوتيات لنص (مفصولة بفواصل، أو * للكل) | wa-webhook |
 | `STT_MODEL` | اختياري: نموذج تحويل الصوت (الافتراضي gpt-transcribe) | wa-webhook |
+| `AI_MODEL` | نموذج فهم الرسائل (حالياً gpt-6-luna). إذا تعطّل يرجع تلقائياً إلى gpt-4o-mini ويُسجَّل حدث ai_fallback. احذفه للرجوع الكامل | wa-webhook |
+| `AI_REASONING` | مستوى التفكير لنماذج التفكير: low (الحالي) أو medium أو high | wa-webhook |
 
 مفاتيح مخططة وغير موجودة بعد: `META_VERIFY_TOKEN` و`META_APP_SECRET` (ربط واتساب الرسمي)، `ALLOWED_ORIGINS` (اختياري).
 

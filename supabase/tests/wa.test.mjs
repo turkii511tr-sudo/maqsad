@@ -817,6 +817,65 @@ await test("ميتا: ملف صوتي كبير لا يُرسل للتحويل، 
   assert.ok(sent(f, "graph.facebook.com/v21.0/109876543210/messages").some((c) => c.body.text.body.includes("ما قدرت أسمعها")));
 });
 
+// ---------- نموذج الذكاء (v4.9) ----------
+const modelSetup = (extra = [], failModel = null) => {
+  const s = structuredClone(seed);
+  s.app_secrets.push(...extra);
+  const { T, client } = makeDb(s);
+  const base = makeFetch(() => aiNext);
+  const f = async (u, init = {}) => {
+    if (failModel && String(u).includes("chat/completions") && JSON.parse(init.body).model === failModel) {
+      base.calls.push({ url: String(u), body: JSON.parse(init.body) });
+      return new Response("model down", { status: 500 });
+    }
+    return base(u, init);
+  };
+  f.calls = base.calls;
+  return { T, client, f };
+};
+
+await test("AI_MODEL=gpt-6-luna: يُرسل بإعدادات نماذج التفكير (بلا max_tokens ولا temperature)", async () => {
+  const { client, f } = modelSetup([{ key: "AI_MODEL", value: "gpt-6-luna" }]);
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000091", "ابي شقة"));
+  const c = sent(f, "chat/completions")[0].body;
+  assert.equal(c.model, "gpt-6-luna");
+  assert.equal(c.max_completion_tokens, 1500);
+  assert.equal(c.reasoning_effort, "low");
+  assert.equal(c.max_tokens, undefined);
+  assert.equal(c.temperature, undefined);
+  assert.equal(c.response_format.type, "json_object");
+});
+
+await test("بدون AI_MODEL: يبقى gpt-4o-mini بإعداداته القديمة", async () => {
+  const { client, f } = modelSetup();
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000092", "ابي شقة"));
+  const c = sent(f, "chat/completions")[0].body;
+  assert.equal(c.model, "gpt-4o-mini"); assert.equal(c.max_tokens, 800); assert.equal(c.temperature, 0.2);
+});
+
+await test("النموذج الجديد تعطّل: يرجع تلقائياً لـ gpt-4o-mini ويرد على العميل بلا تسليم", async () => {
+  const { T, client, f } = modelSetup([{ key: "AI_MODEL", value: "gpt-6-luna" }], "gpt-6-luna");
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000093", "ابي شقة"));
+  const calls = sent(f, "chat/completions").map((c) => c.body.model);
+  assert.deepEqual(calls, ["gpt-6-luna", "gpt-4o-mini"]);
+  assert.equal(T.customers[0].mode, "auto", "سُلّم لموظف بدل الرجوع للنموذج القديم");
+  assert.ok(T.events.some((e) => e.kind === "ai_fallback" && e.detail.model === "gpt-6-luna"));
+  assert.equal(waSent(f).length, 1);
+});
+
+await test("ميزانية بأرقام عربية وفواصل («٤٠٬٠٠٠») تُحفظ 40000", async () => {
+  const { T, client, f } = modelSetup();
+  aiNext = { reply: "سنوي ولا شهري؟", deal_type: "إيجار", property_type: "شقة", location: "النرجس",
+    budget: "٤٠٬٠٠٠ ريال", status: "استفسار عام", mode: "آلي", summary: "شقة بالنرجس" };
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000094", "ابي شقة بالنرجس ميزانيتي ٤٠ الف"));
+  assert.equal(T.customers[0].budget, 40000);
+  aiNext = { reply: "هلا فيك، تبي إيجار ولا شراء؟", status: "استفسار عام", mode: "آلي", summary: "عميل جديد" };
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
