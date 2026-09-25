@@ -1,6 +1,7 @@
 // اختبار محرك واتساب v4 بسيناريوهات حقيقية — بدون لمس قاعدة البيانات الحية
 import { makeDb, makeFetch, loadFunction, sign } from "./harness.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 
 const FN = new URL("../functions/wa-webhook/index.ts", import.meta.url).pathname;
 // رخصة فال سارية لسنة (بتوقيت الرياض) — اختبارات فال تغيّرها حسب الحالة
@@ -644,6 +645,176 @@ await test("معالج قديم ينهي متأخراً: لا يمسح رسال�
   assert.equal(data, "");
   assert.equal(T.customers[0].buffer, "رسالة أحدث");
   assert.equal(T.customers[0].locked_until, 123, "القفل ليس له");
+});
+
+// ---------- الرسائل الصوتية (v4.8) ----------
+const OGG = new Uint8Array(4000).fill(7);
+const voiceSetup = ({ stt, officeFal, media, enabled = "UFQ,WHA" } = {}) => {
+  const s = structuredClone(seed);
+  s.app_secrets.push({ key: "VOICE_OFFICES", value: enabled });
+  s.offices[0].code = "UFQ"; s.offices[1].code = "WHA";
+  if (officeFal) Object.assign(s.offices[0], officeFal);
+  const { T, client } = makeDb(s);
+  const f = makeFetch(() => aiNext, {
+    stt: stt ?? { text: "ابي شقة للإيجار في النرجس", usage: { type: "duration", seconds: 7 } },
+    media: media ?? ((u) => u.startsWith("https://cdn.voice.test/")
+      ? new Response(OGG, { status: 200, headers: { "content-type": "audio/ogg" } }) : null),
+  });
+  return { T, client, f };
+};
+const ptt = (from, id, media = "https://cdn.voice.test/v1.ogg") => new Request("https://x/wa-webhook?k=wk", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ instanceId: "instance190700", data: { from: from + "@c.us", body: "", id: id ?? crypto.randomUUID(), type: "ptt", media, pushname: "أبو فهد" } }),
+});
+const sttCalls = (f) => sent(f, "audio/transcriptions");
+const chatCalls = (f) => sent(f, "chat/completions");
+const voiceKey = (office, waId) => createHash("sha256").update(`voice|${office}|${waId}|wk`).digest("hex");
+
+await test("صوتية: تتحول نصاً ويرد عليها البوت، ويُحفظ النص بعلامة 🎤", async () => {
+  const { T, client, f } = voiceSetup();
+  const { handler } = await loadFunction(FN, client, f);
+  const r = await handler(ptt("966500000071"));
+  assert.equal(r.status, 200);
+  const st = sttCalls(f);
+  assert.equal(st.length, 1, "no transcription call");
+  assert.equal(st[0].body.model, "gpt-transcribe");
+  assert.equal(st[0].body.language, "ar");
+  assert.equal(st[0].body.file.name, "voice.ogg");
+  assert.ok(st[0].body.prompt.includes("النرجس"));
+  assert.ok(String(st[0].headers.Authorization).includes("sk-test"));
+  assert.equal(T.messages.find((m) => m.direction === "in").body, "🎤 ابي شقة للإيجار في النرجس");
+  assert.equal(chatCalls(f).length, 1, "AI not asked");
+  assert.ok(chatCalls(f)[0].body.messages.at(-1).content.includes("🎤 ابي شقة للإيجار"));
+  assert.ok(chatCalls(f)[0].body.messages[0].content.includes("نص محوّل آلياً من رسالة صوتية"));
+  assert.equal(waSent(f).length, 1, "no reply");
+  const ev = T.events.find((e) => e.kind === "voice_ok");
+  assert.equal(ev.detail.sec, 7);
+  assert.equal(ev.detail.k, voiceKey("o1", "966500000071@c.us"));
+});
+
+await test("صوتية لمكتب ما فُعّلت له الميزة: تُتجاهل كما كان", async () => {
+  const { T, client, f } = voiceSetup({ enabled: "OTHER" });
+  const { handler } = await loadFunction(FN, client, f);
+  const r = await (await handler(ptt("966500000072"))).json();
+  assert.equal(r.skipped, "not a customer text message");
+  assert.equal(sttCalls(f).length, 0);
+  assert.equal(waSent(f).length, 0);
+  assert.equal(T.customers.length, 0);
+});
+
+await test("فشل التحويل: رد لطيف يطلب الكتابة، مرة وحدة كل ٣٠ دقيقة", async () => {
+  const { T, client, f } = voiceSetup({ stt: () => new Response("err", { status: 500 }) });
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ptt("966500000073"));
+  await handler(ptt("966500000073"));
+  const nudges = waSent(f).filter((c) => waText(c).includes("ما قدرت أسمعها"));
+  assert.equal(nudges.length, 1);
+  assert.ok(waText(nudges[0]).includes("المساعد الآلي"), "أول رد بلا إفصاح");
+  const fails = T.events.filter((e) => e.kind === "voice_failed");
+  assert.equal(fails.length, 2);
+  assert.ok(fails[0].detail.reason.startsWith("stt 500"), fails[0].detail.reason);
+  assert.equal(chatCalls(f).length, 0);
+});
+
+await test("تعدّى الحد اليومي: يُسلَّم لموظف بلا تحويل، ولا يُقال للعميل «وصلت الحد»", async () => {
+  const { T, client, f } = voiceSetup();
+  const k = voiceKey("o1", "966500000074@c.us");
+  for (let i = 0; i < 15; i++) {
+    T.events.push({ id: 900 + i, office_id: "o1", kind: "voice_ok", level: "info", detail: { k, sec: 5 }, created_at: new Date().toISOString() });
+  }
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ptt("966500000074"));
+  assert.equal(sttCalls(f).length, 0, "حوّل صوتية فوق الحد");
+  const reply = waText(waSent(f).at(-1));
+  assert.ok(reply.includes("حوّلنا طلبك للمستشار"), reply);
+  assert.ok(!reply.includes("الحد"), "العميل عرف بالحد");
+  assert.equal(T.customers[0].mode, "manual");
+  assert.equal(T.customers[0].handoff_reason, "human");
+  assert.ok(sent(f, "telegram").some((t) => t.body.text.includes("فوق الحد")), "المكتب ما تنبّه");
+  assert.ok(T.events.some((e) => e.kind === "voice_limit" && e.detail.scope === "customer"));
+  assert.equal(chatCalls(f).length, 0);
+});
+
+await test("تعدّى المكتب دقائق الشهر: التسليم لموظف بنفس الطريقة", async () => {
+  const { T, client, f } = voiceSetup();
+  T.events.push({ id: 950, office_id: "o1", kind: "voice_ok", level: "info", detail: { k: "someone", sec: 600 * 60 }, created_at: new Date().toISOString() });
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ptt("966500000075"));
+  assert.equal(sttCalls(f).length, 0);
+  assert.ok(T.events.some((e) => e.kind === "voice_limit" && e.detail.scope === "office"));
+  assert.equal(T.customers[0].mode, "manual");
+});
+
+await test("نفس الصوتية وصلت مرتين: تحويل واحد ورد واحد", async () => {
+  const { client, f } = voiceSetup();
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ptt("966500000076", "dup-1"));
+  await handler(ptt("966500000076", "dup-1"));
+  assert.equal(sttCalls(f).length, 1);
+  assert.equal(waSent(f).length, 1);
+});
+
+await test("«توقف» بالصوت تنفَّذ مثل الكتابة", async () => {
+  const { T, client, f } = voiceSetup({ stt: { text: "توقف" } });
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000077", "السلام عليكم"));
+  await handler(ptt("966500000077"));
+  assert.equal(T.customers[0].opted_out, true);
+  assert.ok(waText(waSent(f).at(-1)).includes("أوقفنا الرسائل الآلية"));
+  assert.equal(T.events.find((e) => e.kind === "voice_ok").detail.sec, 2, "تقدير المدة من الحجم");
+});
+
+await test("مكتب فال غير متحقق: صوتية عميل عادي لا تُحوّل ولا يُرد عليها", async () => {
+  const { T, client, f } = voiceSetup({ officeFal: { fal_status: "pending", fal_expires_on: null } });
+  const { handler } = await loadFunction(FN, client, f);
+  const r = await (await handler(ptt("966500000078"))).json();
+  assert.equal(r.skipped, "fal_unverified");
+  assert.equal(sttCalls(f).length, 0);
+  assert.equal(waSent(f).length, 0);
+  assert.ok(T.events.some((e) => e.kind === "fal_blocked"));
+});
+
+await test("مكتب فال غير متحقق: صوتية موظف المكتب تتحول للتجربة", async () => {
+  const { T, client, f } = voiceSetup({ officeFal: { fal_status: "pending", fal_expires_on: null } });
+  T.staff = [{ id: "s1", office_id: "o1", phone: "966500000079", role: "owner", active: true }];
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ptt("966500000079"));
+  assert.equal(sttCalls(f).length, 1);
+  assert.equal(waSent(f).length, 1);
+});
+
+await test("ميتا: الصوتية تُجلب من ميتا بالتوكن وتتحول وتُعالج", async () => {
+  const { T, client, f } = voiceSetup({ media: (u) => {
+    if (u === "https://graph.facebook.com/v21.0/aud-1") {
+      return new Response(JSON.stringify({ url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1",
+        mime_type: "audio/ogg; codecs=opus", file_size: 4000 }), { status: 200 });
+    }
+    if (u.startsWith("https://lookaside.fbsbx.com/")) {
+      return new Response(OGG, { status: 200, headers: { "content-type": "audio/ogg; codecs=opus" } });
+    }
+    return null;
+  } });
+  const { handler, pending } = await loadFunction(FN, client, f);
+  await handler(meta(metaMsg("966544444444", { type: "audio", audio: { id: "aud-1", mime_type: "audio/ogg; codecs=opus", voice: true } })));
+  await Promise.all(pending);
+  assert.equal(f.calls.find((c) => c.url === "https://graph.facebook.com/v21.0/aud-1").headers.Authorization, "Bearer EAAG");
+  assert.equal(f.calls.find((c) => c.url.startsWith("https://lookaside.fbsbx.com/")).headers.Authorization, "Bearer EAAG");
+  assert.equal(sttCalls(f).length, 1);
+  assert.equal(sttCalls(f)[0].body.file.name, "voice.ogg");
+  assert.equal(T.messages.find((m) => m.direction === "in").body, "🎤 ابي شقة للإيجار في النرجس");
+  assert.equal(sent(f, "graph.facebook.com/v21.0/109876543210/messages").length, 1);
+});
+
+await test("ميتا: ملف صوتي كبير لا يُرسل للتحويل، ويُطلب من العميل الكتابة", async () => {
+  const { T, client, f } = voiceSetup({ media: (u) => u === "https://graph.facebook.com/v21.0/aud-big"
+    ? new Response(JSON.stringify({ url: "https://lookaside.fbsbx.com/x", mime_type: "audio/ogg", file_size: 5_000_000 }), { status: 200 })
+    : null });
+  const { handler, pending } = await loadFunction(FN, client, f);
+  await handler(meta(metaMsg("966555555555", { type: "audio", audio: { id: "aud-big" } })));
+  await Promise.all(pending);
+  assert.equal(sttCalls(f).length, 0);
+  assert.equal(T.events.find((e) => e.kind === "voice_failed").detail.reason, "too_large");
+  assert.ok(sent(f, "graph.facebook.com/v21.0/109876543210/messages").some((c) => c.body.text.body.includes("ما قدرت أسمعها")));
 });
 
 for (const r of results) console.log(r.join("  "));

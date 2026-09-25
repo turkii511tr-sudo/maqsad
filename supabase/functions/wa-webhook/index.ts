@@ -1,4 +1,6 @@
-// مقصد — محرك استقبال واتساب (v4.7)
+// مقصد — محرك استقبال واتساب (v4.8)
+// v4.8: الرسائل الصوتية تتحول نصاً ويرد عليها البوت (للمكاتب المذكورة في VOICE_OFFICES فقط، تجربة) —
+//       حد لطول الصوتية، وحد يومي لكل عميل وشهري لكل مكتب، ومن يتعداه يُسلَّم لموظف بلا رسالة «وصلت الحد»
 // v4.7: رسالة تصل أثناء الرد على ما قبلها لا تضيع — تبقى في المخزن ويُرد عليها في دورة تالية (finish_turn)
 // v4.6: التنبيهات على تيليجرام و/أو إشعارات الجوال حسب اختيار المكتب
 // v4.5: رخصة فال — المساعد ما يرد على عملاء مكتب لم يتحقق مشغّل المنصة من رخصته (يرد على موظفيه والمشغّل
@@ -37,6 +39,8 @@ const START_OK =
   "أهلاً بك من جديد. وش نوع طلبك: إيجار ولا شراء؟";
 const MEDIA_REPLY =
   "أعتذر، أفهم الرسائل المكتوبة فقط حالياً. اكتب طلبك وأخدمك مباشرة.";
+const VOICE_FAIL =
+  "وصلتني رسالتك الصوتية لكن ما قدرت أسمعها بوضوح. تقدر تكتب طلبك وأخدمك مباشرة؟";
 // رخصة فال للمكتب منتهية: الطلب يوصل للمستشار، بلا عرض عقارات وبلا ادعاء أن المخزون فاضي
 const LICENSE_HOLD =
   "المستشار العقاري بيتواصل معك بأقرب وقت بالخيارات المناسبة لطلبك.";
@@ -197,6 +201,7 @@ function systemPrompt(office: any, licensed = true) {
 ${intro}
 - رد السلام باختصار. سلام بلا طلب = ترحيب فقط، وممنوع ادعاء متابعة طلب.
 - رسالة إغلاق (تمام/شكرا/أوك/إيموجي فقط) = شكر قصير بلا أي سؤال.
+- الرسالة التي تبدأ بـ 🎤 نص محوّل آلياً من رسالة صوتية وقد يحتوي أخطاء. إذا كان الحي أو الميزانية فيها غير واضح، اسأل للتأكيد بدل التخمين.
 
 أولوية الأسئلة عند النقص (واحدة كل مرة):
 نوع الطلب ← نوع العقار ← الحي ← الميزانية ← عدد الغرف ← موعد المعاينة.
@@ -341,7 +346,8 @@ const DELETE_RE = /(?:احذف|امسح|حذف|مسح)\s*(?:كل\s*)?(?:بيان
 const NEG_DELETE_RE = /(?:^|\s)(?:لا|ما|مو|مب|بدون)\s*(?:(?:ابي|ابغي|ابغا|اريد|تبي|تبون)\s+)?(?:ت|ي|ن)?(?:حذف|مسح)/;
 
 function commandOf(buffer: string): "delete" | "stop" | "start" | null {
-  const lines = String(buffer ?? "").split("\n").map(plain).filter(Boolean);
+  // «توقف» بالصوت أمر مثل «توقف» بالكتابة: نشيل علامة الصوتية قبل المطابقة
+  const lines = String(buffer ?? "").split("\n").map((l) => plain(l.replace(/^\s*🎤\s*/u, ""))).filter(Boolean);
   const all = lines.join(" ");
   if (DELETE_RE.test(all) && !NEG_DELETE_RE.test(all)) return "delete";
   if (lines.some((l) => STOP_RE.test(l))) return "stop";
@@ -688,7 +694,7 @@ async function cloudOffice(phoneNumberId: string) {
   return data;
 }
 
-async function mediaNudge(office: any, waId: string) {
+async function mediaNudge(office: any, waId: string, text = MEDIA_REPLY) {
   // رد واحد كل ٣٠ دقيقة كحد أقصى لنفس الرقم — لا نغرق عميلاً أرسل عدة صور
   const key = await sha("media|" + office.id + "|" + waId);
   const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -701,11 +707,140 @@ async function mediaNudge(office: any, waId: string) {
   if (c && (c.mode === "manual" || c.opted_out)) return;
   // أول رد على عميل يحمل الإفصاح دائماً، حتى لو كانت رسالته الأولى صورة أو صوتاً
   const disclose = !c?.disclosed_at;
-  await sendWhatsApp(office, waId, MEDIA_REPLY + (disclose ? disclosure(office, true) : ""));
+  await sendWhatsApp(office, waId, text + (disclose ? disclosure(office, true) : ""));
   if (c && disclose) {
     await db.from("customers").update({ disclosed_at: new Date().toISOString() }).eq("id", c.id);
   }
   await logEvent(office.id, "info", "media_nudge", { k: key });
+}
+
+// ===== الرسائل الصوتية: تتحول نصاً وتدخل نفس مسار الرسائل المكتوبة =====
+// تجربة: تعمل فقط للمكاتب المذكورة في app_secrets.VOICE_OFFICES (رموز مفصولة بفواصل، أو * للكل)
+const VOICE_MAX_BYTES = 1_000_000;         // تقريباً ٨ دقائق من صوت واتساب
+const VOICE_DAILY_PER_CUSTOMER = 15;       // حماية من العبث؛ الاستخدام العادي ما يوصله
+const VOICE_MONTHLY_MIN_PER_OFFICE = 600;  // دقائق في الشهر لكل مكتب
+// تلميح للنموذج بمفردات العقار وأسماء الأحياء حتى يكتبها صح
+const STT_HINT =
+  "محادثة واتساب بين عميل ومكتب عقار في السعودية: إيجار، شراء، شقة، فيلا، دور، أرض، محل، غرف، ميزانية، سنوي، شهري، " +
+  "النرجس، الملقا، حطين، الياسمين، العارض، القيروان، الصحافة، النخيل، الربيع، الندى، العقيق، الغدير، المروج، قرطبة، " +
+  "الرمال، ظهرة لبن، طويق، السويدي، الشفا، العزيزية.";
+const AUDIO_EXT: Record<string, string> = {
+  "audio/ogg": "ogg", "audio/opus": "ogg", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a",
+  "audio/m4a": "m4a", "audio/x-m4a": "m4a", "audio/wav": "wav", "audio/x-wav": "wav", "audio/webm": "webm",
+};
+
+type Voice = {
+  waId: string; phone: string; name: string; msgId: string;
+  url?: string;      // UltraMsg: رابط الملف مباشرة
+  mediaId?: string;  // ميتا: معرّف الملف، يُجلب رابطه أولاً
+  mime?: string;
+};
+
+async function voiceEnabled(office: any) {
+  const s = await secrets();
+  const list = String(s.VOICE_OFFICES ?? "").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+  return list.includes("*") || (!!office?.code && list.includes(String(office.code).toUpperCase()));
+}
+
+// بداية الشهر بتوقيت الرياض
+function monthStartIso() {
+  const d = new Date(Date.now() + 3 * 3600e3);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - 3 * 3600e3).toISOString();
+}
+
+async function fetchVoice(office: any, v: Voice): Promise<{ bytes: Uint8Array; mime: string }> {
+  let url = v.url ?? "";
+  let mime = (v.mime ?? "audio/ogg").split(";")[0].trim();
+  const headers: Record<string, string> = {};
+  if (v.mediaId) {
+    // ميتا: الرابط صالح ٥ دقائق فقط، فنجلبه وننزّل الملف فوراً
+    const meta = await fetch(`https://graph.facebook.com/v21.0/${v.mediaId}`,
+      { headers: { Authorization: `Bearer ${office.wa_token}` }, signal: AbortSignal.timeout(10_000) });
+    if (!meta.ok) throw new Error(`media_meta ${meta.status}`);
+    const j = await meta.json();
+    if (Number(j.file_size ?? 0) > VOICE_MAX_BYTES) throw new Error("too_large");
+    url = String(j.url ?? "");
+    mime = String(j.mime_type ?? mime).split(";")[0].trim();
+    headers.Authorization = `Bearer ${office.wa_token}`;
+  }
+  if (!/^https:\/\//.test(url)) throw new Error("no_media_url");
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  if (!r.ok) throw new Error(`media ${r.status}`);
+  if (Number(r.headers.get("content-length") ?? 0) > VOICE_MAX_BYTES) throw new Error("too_large");
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  if (bytes.length > VOICE_MAX_BYTES) throw new Error("too_large");
+  if (bytes.length < 200) throw new Error("empty_audio");
+  const type = String(r.headers.get("content-type") ?? "").split(";")[0].trim();
+  return { bytes, mime: AUDIO_EXT[type] ? type : mime };
+}
+
+async function transcribe(bytes: Uint8Array, mime: string): Promise<{ text: string; sec: number }> {
+  const s = await secrets();
+  const key = s.OPENAI_API_KEY;
+  if (!key || key === "SET_ME") throw new Error("no_openai_key");
+  const ext = AUDIO_EXT[mime];
+  if (!ext) throw new Error("unsupported_format");
+  const fd = new FormData();
+  fd.append("file", new Blob([bytes as unknown as BlobPart], { type: mime }), `voice.${ext}`);
+  fd.append("model", s.STT_MODEL || "gpt-transcribe");
+  fd.append("language", "ar");
+  fd.append("prompt", STT_HINT);
+  fd.append("response_format", "json");
+  const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST", headers: { Authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) throw new Error(`stt ${r.status}: ${(await r.text()).slice(0, 160)}`);
+  const j = await r.json();
+  const text = String(j.text ?? "").replace(/\s+/g, " ").trim().slice(0, 1500);
+  // مدة الصوت من الفاتورة إن وُجدت، وإلا تقدير من الحجم (صوت واتساب ≈ ٢ كيلوبايت للثانية)
+  const sec = j.usage?.type === "duration" && Number(j.usage.seconds) > 0
+    ? Math.round(Number(j.usage.seconds))
+    : Math.max(1, Math.round(bytes.length / 2000));
+  return { text, sec };
+}
+
+async function handleVoice(office: any, v: Voice) {
+  const msg: Incoming = { waId: v.waId, phone: v.phone, name: v.name, msgId: v.msgId, body: "🎤" };
+
+  // مكتب ما تحققنا من رخصته: نفس بوابة النص — لا نحوّل صوت عميل لن نرد عليه
+  if (falState(office) === "blocked" && !(await isTester(office, v.phone))) {
+    return processIncoming(office, msg);
+  }
+  // نفس الصوتية وصلت مرتين: لا نحوّلها ولا ندفع عليها مرتين
+  const { data: seen } = await db.from("customers").select("id").eq("office_id", office.id)
+    .eq("wa_id", v.waId).contains("recent_ids", [v.msgId]).maybeSingle();
+  if (seen) return { ok: true, skipped: "duplicate" };
+
+  const k = await sha("voice|" + office.id + "|" + v.waId);
+  const dayAgo = new Date(Date.now() - 24 * 3600e3).toISOString();
+  const { count: today } = await db.from("events").select("id", { count: "exact", head: true })
+    .eq("office_id", office.id).eq("kind", "voice_ok").gte("created_at", dayAgo).contains("detail", { k });
+  let limit: "customer" | "office" | null = (today ?? 0) >= VOICE_DAILY_PER_CUSTOMER ? "customer" : null;
+  if (!limit) {
+    const { data: used } = await db.from("events").select("detail").eq("office_id", office.id)
+      .eq("kind", "voice_ok").gte("created_at", monthStartIso()).limit(20000);
+    const sec = (used ?? []).reduce((a: number, e: any) => a + (Number(e?.detail?.sec) || 0), 0);
+    if (sec >= VOICE_MONTHLY_MIN_PER_OFFICE * 60) limit = "office";
+  }
+  if (limit) {
+    // تعدّى الحد: ما نقول للعميل «وصلت الحد» — نسلّم المحادثة لموظف يسمعها (كلمة «موظف» تفعّل التسليم)
+    await logEvent(office.id, "warn", "voice_limit", { k, scope: limit });
+    return processIncoming(office, { ...msg,
+      body: "🎤 [رسالة صوتية ما تحوّلت لنص لأنها فوق الحد — تحتاج موظف يسمعها من جوال المكتب]" });
+  }
+
+  let heard: { text: string; sec: number };
+  try {
+    const a = await fetchVoice(office, v);
+    heard = await transcribe(a.bytes, a.mime);
+    if (!heard.text) throw new Error("empty_text");
+  } catch (e) {
+    await logEvent(office.id, "warn", "voice_failed", { k, reason: String((e as Error)?.message ?? e).slice(0, 160) });
+    await mediaNudge(office, v.waId, VOICE_FAIL);
+    return { ok: true, skipped: "voice_failed" };
+  }
+  await logEvent(office.id, "info", "voice_ok", { k, sec: heard.sec });
+  return processIncoming(office, { ...msg, body: "🎤 " + heard.text });
 }
 
 async function handleMeta(payload: any) {
@@ -765,6 +900,13 @@ async function handleMeta(payload: any) {
         const from = String(msg?.from ?? "").replace(/\D/g, "");
         if (!from) continue;
         const t = msg?.type;
+        if (t === "audio" && msg?.audio?.id && await voiceEnabled(office)) {
+          jobs.push(handleVoice(office, {
+            waId: from, phone: from, name: names[from] ?? "", msgId: String(msg?.id ?? crypto.randomUUID()),
+            mediaId: String(msg.audio.id), mime: String(msg.audio.mime_type ?? "audio/ogg"),
+          }));
+          continue;
+        }
         const body = t === "text" ? msg?.text?.body
           : t === "interactive" ? (msg?.interactive?.button_reply?.title ?? msg?.interactive?.list_reply?.title)
           : t === "button" ? msg?.button?.text
@@ -836,10 +978,12 @@ Deno.serve(async (req) => {
   const instanceRaw = String(payload?.instanceId ?? payload?.instance ?? "");
   const instanceKey = instanceRaw.replace(/^instance/i, "").toLowerCase();
   const body = String(d.body ?? "").trim();
+  // الرسالة الصوتية في UltraMsg نوعها ptt (مسجّلة من واتساب) أو audio (ملف صوت)، ورابطها في media
+  const isVoice = d.type === "ptt" || d.type === "audio";
+  const skip = () => Response.json({ ok: true, skipped: "not a customer text message" });
 
-  if (d.fromMe === true || (d.type && d.type !== "chat") || !body) {
-    return Response.json({ ok: true, skipped: "not a customer text message" });
-  }
+  if (d.fromMe === true) return skip();
+  if (!isVoice && ((d.type && d.type !== "chat") || !body)) return skip();
 
   const { data: office } = await db.from("offices").select("*")
     .eq("wa_provider", "ultramsg").eq("wa_instance_key", instanceKey).eq("active", true).maybeSingle();
@@ -849,6 +993,14 @@ Deno.serve(async (req) => {
   }
 
   const waId = String(d.from ?? "");
+  if (isVoice) {
+    if (!(await voiceEnabled(office))) return skip();
+    const rv = await handleVoice(office, {
+      waId, phone: waId.replace(/@c\.us$/, ""), name: d.pushname ?? "",
+      msgId: String(d.id ?? crypto.randomUUID()), url: String(d.media ?? ""), mime: String(d.mimetype ?? "audio/ogg"),
+    });
+    return Response.json(rv, { status: (rv as any).status ?? 200 });
+  }
   const r = await processIncoming(office, {
     waId, phone: waId.replace(/@c\.us$/, ""), name: d.pushname ?? "",
     msgId: String(d.id ?? crypto.randomUUID()), body,

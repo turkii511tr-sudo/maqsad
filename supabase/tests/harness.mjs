@@ -30,7 +30,13 @@ export function makeDb(seed) {
     is(c, v) { this.f.push((r) => (r[c] ?? null) === v); return this; }
     gte(c, v) { this.f.push((r) => String(r[c]) >= String(v)); return this; }
     in(c, vs) { this.f.push((r) => vs.includes(r[c])); return this; }
-    contains(c, obj) { this.f.push((r) => Object.entries(obj).every(([k, v]) => r[c]?.[k] === v)); return this; }
+    contains(c, obj) {
+      // مصفوفة: العمود يحتوي كل العناصر (مثل recent_ids @> '{id}') · كائن: مفاتيح JSON متطابقة
+      this.f.push((r) => Array.isArray(obj)
+        ? obj.every((x) => (r[c] ?? []).includes(x))
+        : Object.entries(obj).every(([k, v]) => r[c]?.[k] === v));
+      return this;
+    }
     order() { return this; } limit() { return this; }
     range(a, b) { this.rng = [a, b]; return this; }
     maybeSingle() { this.one = "maybe"; return this; }
@@ -125,13 +131,24 @@ export function makeDb(seed) {
   };
 }
 
-export function makeFetch(ai) {
+// opts.stt: رد تحويل الصوت (كائن، أو دالة ترجع كائناً أو Response) · opts.media: دالة (url, init) ترجع Response لروابط الملفات
+export function makeFetch(ai, opts = {}) {
   const calls = [];
   const f = async (url, init = {}) => {
     const u = String(url);
     const body = init.body instanceof URLSearchParams ? Object.fromEntries(init.body)
+      : init.body instanceof FormData
+      ? Object.fromEntries([...init.body.entries()].map(([k, v]) => [k, typeof v === "string" ? v : { name: v.name, size: v.size, type: v.type }]))
       : typeof init.body === "string" ? JSON.parse(init.body) : (init.body ?? null); // إشعار الجوال: بايتات مشفّرة
-    calls.push({ url: u, body });
+    calls.push({ url: u, body, headers: init.headers ?? {} });
+    if (u.includes("api.openai.com/v1/audio/transcriptions")) {
+      const r = typeof opts.stt === "function" ? opts.stt(body) : (opts.stt ?? { text: "ابي شقة للإيجار في النرجس" });
+      return r instanceof Response ? r : new Response(JSON.stringify(r), { status: 200 });
+    }
+    if (opts.media) {
+      const r = opts.media(u, init);
+      if (r) return r;
+    }
     if (u.includes("api.openai.com")) {
       const content = JSON.stringify(typeof ai === "function" ? ai(body) : ai);
       return new Response(JSON.stringify({ choices: [{ message: { content } }],
