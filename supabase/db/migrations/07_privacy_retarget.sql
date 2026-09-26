@@ -143,7 +143,8 @@ $function$;
 
 revoke all on function public.match_customers(uuid, uuid, integer, integer) from public, anon, authenticated;
 grant execute on function public.match_customers(uuid, uuid, integer, integer) to service_role;
-revoke all on function public.annual_budget(text, numeric, text) from anon, authenticated;
+revoke all on function public.annual_budget(text, numeric, text) from public, anon, authenticated;
+grant execute on function public.annual_budget(text, numeric, text) to service_role;
 
 -- ===== ٤) موافقة المكتب على الشروط واتفاقية معالجة البيانات (من داخل التطبيق) =====
 alter table public.offices add column if not exists terms_version text;

@@ -514,6 +514,7 @@ grant execute on function ingest_message(uuid,text,text,text,text,text,integer) 
 grant execute on function ingest_message(uuid,text,text,text,text,text,integer) to service_role;
 grant execute on function match_properties(uuid,text,text,text[],numeric,integer,integer) to public;
 grant execute on function match_properties(uuid,text,text,text[],numeric,integer,integer) to service_role;
+grant execute on function annual_budget(text,numeric,text) to service_role;
 grant execute on function match_customers(uuid,uuid,integer,integer) to service_role;
 grant execute on function mint_magic(uuid) to service_role;
 grant execute on function office_month_stats(uuid,timestamp with time zone,timestamp with time zone) to service_role;
@@ -526,6 +527,7 @@ revoke all on function bump_usage(uuid,integer,bigint,bigint,bigint,integer,inte
 revoke all on function call_edge(text,jsonb) from public;
 revoke all on function finish_turn(uuid,text) from public;
 revoke all on function housekeeping() from public;
+revoke all on function annual_budget(text,numeric,text) from public;
 revoke all on function match_customers(uuid,uuid,integer,integer) from public;
 revoke all on function mint_magic(uuid) from public;
 revoke all on function office_month_stats(uuid,timestamp with time zone,timestamp with time zone) from public;
