@@ -508,6 +508,7 @@ select.input{background-image:linear-gradient(45deg,transparent 50%,var(--ink-3)
 .foot-cols a:hover{color:var(--c-saffron);text-decoration:underline}
 .foot-legal{margin-top:56px;padding-top:20px;border-top:1px solid var(--night-line);font-size:16px;color:var(--on-night-3);
   display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 24px}
+.foot-owner{margin:0 0 8px;color:var(--on-night-2)}
 .foot-ids{display:flex;flex-wrap:wrap;gap:4px 14px}
 .foot-ids > span + span::before{content:"";display:inline-block;width:5px;height:5px;margin-inline-end:14px;vertical-align:middle;
   background:var(--c-saffron);transform:rotate(45deg) translateY(-1px);opacity:.7}

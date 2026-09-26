@@ -611,3 +611,16 @@ h4.sub{font-size:15.5px;font-weight:600;margin:0 0 var(--s3)}
 #falReqBox{margin-top:var(--s3)}
 #falReqBox .btn{width:auto}
 .falreq span{line-height:1.6}
+
+/* v14: اتفاقية معالجة البيانات · عملاء سابقون يطابقون العقار */
+.terms-pts{margin:0 0 var(--s3);padding-inline-start:20px;display:grid;gap:var(--s2);line-height:1.75;font-size:15px;color:var(--ink-2)}
+.terms-pts b{color:var(--ink)}
+.matches-cta{text-align:center;padding:var(--s2) 0 var(--s4)}
+.matches-cta b{display:block;font-size:44px;line-height:1.1;color:var(--accent)}
+.matches-cta p{margin:6px 0 0;color:var(--ink-2)}
+.pm-list{display:grid;gap:var(--s3);margin:var(--s3) 0}
+.pm-row{border:1px solid var(--line);border-radius:14px;padding:var(--s3);display:grid;gap:var(--s3)}
+.pm-row .main{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.pm-row .main .s{flex-basis:100%;color:var(--ink-3);font-size:14px}
+.pm-row .btnrow .btn{min-width:0}
+.pm-row a.btn{text-decoration:none}

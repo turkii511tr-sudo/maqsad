@@ -178,7 +178,10 @@ create table public.offices (
   fal_signup_proof text,
   fal_request jsonb,
   onboarded_at timestamp with time zone,
-  onboarding jsonb not null default '{}'::jsonb
+  onboarding jsonb not null default '{}'::jsonb,
+  terms_version text,
+  terms_accepted_at timestamp with time zone,
+  terms_accepted_by uuid
 );
 
 create table public.otps (
@@ -425,3 +428,4 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on public.v_listable_properties to service_role;
 
 create index if not exists events_kind_id_idx on public.events (kind, id desc);
+create index if not exists messages_created_idx on public.messages (created_at);

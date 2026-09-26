@@ -117,6 +117,7 @@ export function makeDb(seed) {
     return left;
   };
   rpcs.match_properties = () => T.__matches ?? [];
+  rpcs.match_customers = (a) => { (T.__custCalls ??= []).push(a); return (T.__custMatches ?? []).filter((c) => c.office_id === undefined || c.office_id === a.p_office); };
   // عدّادات الاستهلاك والإحصاءات: نسجّل النداء ونعيد ما يحدده الاختبار
   rpcs.bump_usage = (a) => { (T.__usage ??= []).push(a); return null; };
   rpcs.office_month_stats = (a) => { (T.__statsCalls ??= []).push(a); return T.__month_stats_fn ? T.__month_stats_fn(a) : (T.__month_stats ?? { new_customers: 0 }); };

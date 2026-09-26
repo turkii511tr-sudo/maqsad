@@ -8,6 +8,14 @@ const DIST = path.join(__dirname, "..", "dist");
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++; console.log("  ✗", m); } };
 
+// الحد الأدنى من نموذج الانضمام: الاسم والجوال ورقم فال وصورتها والموافقة
+const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+async function fillMin(p) {
+  await p.fill("#jOffice", "مكتب"); await p.fill("#jName", "خالد"); await p.fill("#jPhone", "0551234567");
+  await p.fill("#jFal", "11002233");
+  await p.setInputFiles("#jFalFile", { name: "fal.png", mimeType: "image/png", buffer: PNG1 });
+  await p.check("#jConsent"); await p.waitForTimeout(150);
+}
 (async () => {
   const srv = await serve(DIST, 4180);
   const b = await chromium.launch({ args: ["--no-sandbox"] });
@@ -63,7 +71,7 @@ const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++
     const p = await page("/", { api: (b, n) => n === 1 ? [422, { error: "راجع الحقول المظللة", fields: { fal_license: "رقم رخصة فال أرقام فقط" } }] : [200, { ok: true }] });
     await p.click("#jSubmit");
     const errs = await p.$$eval("#joinForm .ferr", (x) => x.map((e) => e.textContent));
-    ok(errs.length === 4 && p.sent.length === 0, "تحقق محلي: ٤ أخطاء ولا إرسال (" + errs.length + ")");
+    ok(errs.length === 6 && p.sent.length === 0, "تحقق محلي: ٦ أخطاء (منها رقم فال وصورتها) ولا إرسال (" + errs.length + ")");
     ok(await p.evaluate(() => document.activeElement.id) === "jOffice", "التركيز ينتقل لأول حقل خاطئ");
     await p.click("#jSubmit");
     ok(await p.$("#jMsg") && /راجع/.test(await p.$eval("#jMsg", (m) => m.textContent)), "رسالة النموذج تبقى بعد محاولة ثانية");
@@ -74,13 +82,16 @@ const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++
     await p.fill("#jFal", "١١٠٠٢٢٣٣");
     await p.selectOption("#jAgents", "2-5");
     await p.fill("#jNote", "إيجار شمال الرياض");
+    // صورة رخصة فال إلزامية (PNG حقيقي > ١ كيلوبايت)
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    await p.setInputFiles("#jFalFile", { name: "fal.png", mimeType: "image/png", buffer: png });
     await p.check("#jConsent");
     await p.waitForTimeout(2600);
     await p.click("#jSubmit");
     await p.waitForTimeout(400);
     ok(p.sent.length === 1, "أُرسل الطلب");
     const s = p.sent[0].body;
-    ok(s.office_name === "مكتب النخبة" && s.phone === "٠٥٥ ١٢٣ ٤٥٦٧" && s.fal_license === "11002233" && s.agents === "2-5" && s.consent === true && s.website === "", "حقول الإرسال (تنظيف المسافات وتحويل أرقام فال)");
+    ok(s.office_name === "مكتب النخبة" && s.phone === "٠٥٥ ١٢٣ ٤٥٦٧" && s.fal_license === "11002233" && s.agents === "2-5" && s.consent === true && s.website === "" && s.v === 2 && /^data:image\/jpeg;base64,/.test(s.fal_file || ""), "حقول الإرسال (تنظيف المسافات وتحويل أرقام فال)");
     ok(s.t >= 2500, "وقت التعبئة يتجاوز فخ البرامج (" + s.t + "ms)");
     ok(p.sent[0].url.endsWith("/functions/v1/join?forceFunctionRegion=eu-central-1"), "الطلب يُعالَج في فرانكفورت (تثبيت المنطقة)");
     ok(await p.$eval("#jFal", (e) => e.closest(".field").classList.contains("bad")), "خطأ الخادم يظهر على الحقل نفسه");
@@ -95,7 +106,7 @@ const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++
   }
   {
     const p = await page("/", { api: () => [200, { ok: true, duplicate: true }] });
-    await p.fill("#jOffice", "مكتب"); await p.fill("#jName", "خالد"); await p.fill("#jPhone", "0551234567"); await p.check("#jConsent");
+    await fillMin(p);
     await p.waitForTimeout(2600); await p.click("#jSubmit");
     await p.waitForSelector("#joinDone:not([hidden])");
     ok(/وصلنا من قبل/.test(await p.$eval("#joinDone", (d) => d.textContent)), "طلب مكرر: رسالة مناسبة");
@@ -103,14 +114,14 @@ const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++
   }
   {
     const p = await page("/", { api: () => [429, { error: "وصلتنا عدة طلبات من نفس الجهاز اليوم." }] });
-    await p.fill("#jOffice", "مكتب"); await p.fill("#jName", "خالد"); await p.fill("#jPhone", "0551234567"); await p.check("#jConsent");
+    await fillMin(p);
     await p.click("#jSubmit"); await p.waitForTimeout(400);
     ok(/عدة طلبات/.test(await p.$eval("#jMsg", (m) => m.textContent)) && !(await p.$eval("#jSubmit", (b) => b.disabled)), "حد الطلبات: رسالة الخادم والزر يرجع");
     await p.ctx.close();
   }
   {
     const p = await page("/", { api: () => [0] });
-    await p.fill("#jOffice", "مكتب"); await p.fill("#jName", "خالد"); await p.fill("#jPhone", "0551234567"); await p.check("#jConsent");
+    await fillMin(p);
     await p.click("#jSubmit"); await p.waitForTimeout(400);
     ok(/بالإنترنت/.test(await p.$eval("#jMsg", (m) => m.textContent)), "انقطاع الشبكة: رسالة واضحة");
     await p.ctx.close();
@@ -168,7 +179,7 @@ const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++
     const p = await ctx.newPage();
     await p.route("https://fonts.googleapis.com/**", (r) => r.fulfill({ status: 200, contentType: "text/css", body: "" }));
     await p.goto("http://localhost:4181/index.html");
-    await p.fill("#jOffice", "مكتب"); await p.fill("#jName", "خالد"); await p.fill("#jPhone", "0551234567"); await p.check("#jConsent");
+    await fillMin(p);
     await p.click("#jSubmit"); await p.waitForTimeout(300);
     ok(/معاينة/.test(await p.$eval("#jMsg", (m) => m.textContent)), "المعاينة: لا إرسال فعلي");
     await ctx.close();

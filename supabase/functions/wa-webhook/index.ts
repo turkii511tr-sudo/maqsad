@@ -1,4 +1,7 @@
-// مقصد — محرك استقبال واتساب (v4.9)
+// مقصد — محرك استقبال واتساب (v5.0)
+// v5.0: تقليل ما يطلع للذكاء الاصطناعي — الاسم وأرقام الجوال والهوية والآيبان والإيميل والروابط تُستبدل برموز
+//       قبل الإرسال وتُعاد بعده (نظام حماية البيانات) · store:false · صيغة المخاطبة (مذكر/مؤنث) تُمرَّر بدل الاسم
+//       · الأحياء المفصولة بالفاصلة العربية «،» تُطابق كل حي على حدة
 // v4.9: نموذج الذكاء يُختار من المفاتيح (AI_MODEL، مثل gpt-6-luna) بإعدادات نماذج التفكير، ومع تعطّله يرجع
 //       تلقائياً لـ gpt-4o-mini · الأرقام العربية في الميزانية تُقرأ صح · صور العقار يرسلها المستشار لا البوت
 // v4.8: الرسائل الصوتية تتحول نصاً ويرد عليها البوت (للمكاتب المذكورة في VOICE_OFFICES فقط، تجربة) —
@@ -204,6 +207,8 @@ ${intro}
 - رد السلام باختصار. سلام بلا طلب = ترحيب فقط، وممنوع ادعاء متابعة طلب.
 - رسالة إغلاق (تمام/شكرا/أوك/إيموجي فقط) = شكر قصير بلا أي سؤال.
 - إذا طلب العميل صور العقار أو فيديو: قل إن المستشار العقاري بيرسلها له بعد ما تكتمل تفاصيل طلبه، ولا تعد بإرسالها بنفسك.
+- الرموز بين قوسين مزدوجين مثل {{اسم1}} و{{جوال1}} و{{هوية1}} بيانات شخصية مخفية عنك لحماية خصوصية العميل. عاملها كالقيمة الحقيقية تماماً وانسخها حرفياً عند الحاجة (مثلاً name = "{{اسم1}}"، أو «هلا {{اسم1}}» في الرد)، ولا تسأل العميل عنها ولا تعلّق على وجودها.
+- خاطب العميل في الرد واكتب الملخص حسب «مخاطبة العميل» في السياق (مذكر أو مؤنث)، ولا تذكر صيغة المخاطبة في الملخص.
 - الرسالة التي تبدأ بـ 🎤 نص محوّل آلياً من رسالة صوتية وقد يحتوي أخطاء. إذا كان الحي أو الميزانية فيها غير واضح، اسأل للتأكيد بدل التخمين.
 
 أولوية الأسئلة عند النقص (واحدة كل مرة):
@@ -250,40 +255,173 @@ status: مؤهل | استفسار عام
 mode: آلي | تدخل يدوي`;
 }
 
-async function askAI(office: any, c: any) {
+// ===== تقليل ما يطلع للذكاء الاصطناعي (نظام حماية البيانات الشخصية) =====
+// مزوّد الذكاء خارج المملكة، فما نرسل له إلا اللي يحتاجه لفهم الطلب العقاري:
+// اسم العميل وأرقام الجوال والهاتف والهوية والآيبان والإيميلات والروابط تُستبدل برموز مثل {{اسم1}} و{{جوال1}}،
+// ويرجع الرد بنفس الرموز فنعيد القيم الحقيقية هنا. رقم جوال العميل نفسه ما يُرسل أصلاً.
+// أرقام الميزانية والمساحة والغرف تبقى كما هي (يحتاجها الفهم، وما تعرّف بالشخص).
+const DG = "[0-9٠-٩۰-۹]";
+const latin = (s: string) =>
+  String(s ?? "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+type Vault = { byToken: Map<string, string>; byValue: Map<string, string>; n: Record<string, number> };
+const newVault = (): Vault => ({ byToken: new Map(), byValue: new Map(), n: {} });
+function tokenFor(v: Vault, kind: string, value: string) {
+  const key = kind + "|" + value.trim();
+  let t = v.byValue.get(key);
+  if (!t) {
+    v.n[kind] = (v.n[kind] ?? 0) + 1;
+    t = `{{${kind}${v.n[kind]}}}`;
+    v.byValue.set(key, t);
+    v.byToken.set(t, value.trim());
+  }
+  return t;
+}
+const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const AR = "\\u0621-\\u064A\\u0660-\\u0669\\u06F0-\\u06F9A-Za-z0-9";
+// كلمات لا تكون اسماً حتى لو جاءت مكان الاسم (اسم واتساب مثل «عقار» أو «شقة»)
+const NOT_NAME = /^(?:شقه|شقة|فيلا|فله|دور|ارض|أرض|محل|عماره|عمارة|ايجار|إيجار|شراء|عقار|عقارات|بيع|الله|مكتب)$/;
+// العميل يعرّف بنفسه: «اسمي محمد العتيبي» · «معك أبو فهد» · «أنا أم سارة» · «أخوك بو خالد»
+function introNames(text: string): string[] {
+  const out: string[] = [];
+  const W = "[\\u0621-\\u064A]{2,}";
+  const kunya = new RegExp(`(?:^|[\\s،,.!؟])(?:معك|معاك|انا|أنا|اسمي|أخوك|اخوك|أختك|اختك)\\s+((?:أبو|ابو|أم|ام|بو)\\s+${W})`, "g");
+  for (const m of text.matchAll(kunya)) out.push(m[1]);
+  const named = new RegExp(`(?:^|[\\s،,.!؟])اسمي\\s+(${W}(?:\\s+ال${W}){0,2})`, "g");
+  for (const m of text.matchAll(named)) {
+    const first = m[1].split(/\s+/)[0];
+    if (!/^(?:أبو|ابو|أم|ام|بو)$/.test(first) && !NOT_NAME.test(first)) out.push(m[1]);
+  }
+  return out;
+}
+const KUNYA = /^(?:أبو|ابو|أم|ام|بو)$/;
+// أجزاء الاسم: «عبد + اسم» جزء واحد («عبد الله»، «عبد العزيز»)
+function nameUnits(n: string): string[] {
+  const w = String(n ?? "").split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < w.length; i++) {
+    if (w[i] === "عبد" && w[i + 1]) { out.push(w[i] + " " + w[++i]); continue; }
+    out.push(w[i]);
+  }
+  return out;
+}
+// صيغة المخاطبة من الاسم قبل إخفائه — عشان الرد يخاطب العميلة بالمؤنث مثل ما كان يسوي والاسم ظاهر
+const FEMALE = new Set(("ريم هند مريم نوف لمى لما سلمى هيا شهد جود رهف غدير عبير أمل امل منى هدى مها ندى رزان لين ليان روان " +
+  "أسماء اسماء نجلاء العنود البندري مشاعل نوال وعد غلا رغد بشاير أريج اريج دلال ابتسام سمر أروى اروى رنا رناد دانه نوره " +
+  "ساره منيره فاطمه عائشه لطيفه حصه موضي الجوهره جواهر شوق عهود أثير اثير لولوه ليلى سعاد وجدان هيفاء هيفا أفنان افنان " +
+  "غاده مي تهاني أماني اماني منال نهى نجود حنان بدور شيخه خلود مرام ميار سديم جنى جنا تالا ترف لجين رؤى ريناد").split(" "));
+const MALE_TA = /^(?:حمزة|طلحة|أسامة|اسامة|عبيدة|معاوية|عطية|حذيفة|عكرمة|قتيبة|خليفة|عروة|ربيعة|عقبة|مسلمة|جبلة|ثامرة|علقمة|عنترة|قدامة|سلامة|أمية|اميه)$/;
+function addressOf(names: string[]): "مؤنث" | "مذكر" {
+  for (const n of names) {
+    const w = nameUnits(String(n ?? "").trim());
+    if (!w.length) continue;
+    if (/^(?:أم|ام)$/.test(w[0])) return "مؤنث";
+    if (/^(?:أبو|ابو|بو)$/.test(w[0])) return "مذكر";
+    const f = w[0];
+    if (FEMALE.has(f) || (/ة$/.test(f) && !MALE_TA.test(f))) return "مؤنث";
+    if (/[ء-ي]/.test(f)) return "مذكر";
+  }
+  // بلا اسم يُعرف منه: المذكر مثل ما كان المساعد يخاطب قبل الإخفاء
+  return "مذكر";
+}
+// رقم في سياق مبلغ («١٥٠٠٠٠٠٠٠ ريال»، «ميزانيتي 500000000») لا يُخفى
+const moneyAround = (text: string, at: number, len: number) =>
+  /^\s*(?:ريال|ر\.?\s?س|﷼|الف|ألف|آلاف|مليون|sar\b)/i.test(text.slice(at + len, at + len + 12)) ||
+  /(?:ميزاني|سعر|بحدود|حدود|budget)[^\n]{0,12}$/i.test(text.slice(Math.max(0, at - 24), at));
+function maskText(v: Vault, text: string, names: string[]) {
+  let t = String(text ?? "");
+  if (!t) return t;
+  // الإيميلات والروابط أولاً (قد تحتوي أرقاماً)
+  t = t.replace(/[^\s@<>()،,]+@[^\s@<>()،,]+\.[A-Za-z]{2,}/g, (m) => tokenFor(v, "إيميل", m));
+  t = t.replace(/(?:https?:\/\/|www\.)[^\s]+/gi, (m) => tokenFor(v, "رابط", m));
+  // الآيبان السعودي
+  t = t.replace(new RegExp(`\\bSA\\s?${DG}(?:\\s?${DG}){21}`, "gi"), (m) => tokenFor(v, "آيبان", m));
+  // الجوال السعودي بأي صيغة: 05xxxxxxxx · 5xxxxxxxx · 9665xxxxxxxx · +966 5x xxx xxxx
+  const phone = new RegExp(
+    `(?<!${DG})(?:(?:\\+|00)?(?:966|٩٦٦)[\\s-]?|[0٠])?[5٥](?:[\\s-]?${DG}){8}(?!${DG})`, "g");
+  t = t.replace(phone, (m, at, all) => moneyAround(all, at, m.length) ? m : tokenFor(v, "جوال", m));
+  // أرقام طويلة متصلة: الهوية والإقامة (١٠ أرقام تبدأ بـ ١ أو ٢)، الهاتف الثابت (يبدأ بـ ٠)، وأي رقم ١١ خانة فأكثر
+  t = t.replace(new RegExp(`(?<!${DG})${DG}{10,}(?!${DG})`, "g"), (m, at, all) => {
+    if (moneyAround(all, at, m.length)) return m;
+    const d = latin(m);
+    if (d.length === 10 && /^[12]/.test(d)) return tokenFor(v, "هوية", m);
+    if (d.length >= 11 || /^0/.test(d)) return tokenFor(v, "رقم", m);
+    return m;
+  });
+  // الأسماء: الاسم كامل أولاً ثم كل جزء منه وحده («فهد القحطاني» ثم «فهد» ثم «القحطاني»).
+  // كل جزء له رمز خاص حتى يقدر المساعد يقول «هلا {{اسم1}}» بالاسم الأول فقط، و«أبو/أم» تبقى ظاهرة
+  const full = [...new Set(names.map((n) => String(n ?? "").trim()).filter((n) =>
+    n.length >= 2 && !NOT_NAME.test(n) && !/^\{\{/.test(n)))].sort((a, b) => b.length - a.length);
+  const bound = (x: string) => new RegExp(`(?<![${AR}])${reEsc(x)}(?![${AR}])`, "g");
+  for (const n of full) {
+    const masked = nameUnits(n).map((u) => KUNYA.test(u) ? u : tokenFor(v, "اسم", u)).join(" ");
+    t = t.replace(bound(n), () => masked);
+  }
+  const parts = [...new Set(full.flatMap(nameUnits).filter((u) => !KUNYA.test(u) && u.length >= 3 && !NOT_NAME.test(u)))]
+    .sort((a, b) => b.length - a.length);
+  for (const u of parts) t = t.replace(bound(u), () => tokenFor(v, "اسم", u));
+  return t;
+}
+// يعيد القيم الحقيقية مكان الرموز. رمز غير معروف (أو محرّف) يُحذف بدل ما يوصل للعميل
+function unmask(v: Vault, s: unknown) {
+  if (s === null || s === undefined) return s;
+  return String(s)
+    .replace(/\{\{\s*([ء-ي]+)\s*([0-9٠-٩]+)\s*\}\}/g, (_m, k, n) => v.byToken.get(`{{${k}${latin(n)}}}`) ?? "")
+    .replace(/\{\{[^}]*\}\}/g, "")
+    .replace(/[ \t]{2,}/g, " ").replace(/ ([،,.!؟])/g, "$1").trim();
+}
+
+// الرسالة اللي تروح للذكاء: السياق المسجل + الجديد، بعد الإخفاء
+function aiUserPrompt(c: any, v: Vault, profileName = "") {
+  const names = [c.name, profileName, ...introNames(String(c.buffer ?? "")), ...introNames(String(c.summary ?? ""))]
+    .filter(Boolean) as string[];
+  const m = (x: unknown) => maskText(v, String(x ?? ""), names);
+  return `السياق المسجل للعميل:
+الاسم: [${m(c.name)}]
+مخاطبة العميل: [${addressOf(names)}]
+نوع الطلب: [${c.deal_type ?? ""}]
+نوع العقار: [${c.property_type ?? ""}]
+الميزانية: [${c.budget ?? ""}] [${c.budget_period ?? ""}]
+الحي: [${m(c.location)}]
+عدد الغرف: [${c.rooms ?? ""}]
+موعد المعاينة: [${m(c.appointment)}]
+الملخص: [${m(c.summary)}]
+وضع المحادثة: [${c.mode === "manual" ? "تدخل يدوي" : "آلي"}]
+
+رسالة/رسائل العميل الجديدة:
+${m(c.buffer)}
+
+ادمج الجديد مع المسجل، واعتمد القيمة الجديدة عند التعديل، ولا تخترع شيئاً.
+أعد حساب status من الصفر. أعد JSON فقط.`;
+}
+
+// الحقول النصية في رد الذكاء ترجع لها القيم الحقيقية
+const UNMASK_FIELDS = ["reply", "name", "summary", "location", "appointment", "budget", "rooms"];
+function unmaskAI(v: Vault, ai: any) {
+  if (!ai || typeof ai !== "object") return ai;
+  const out = { ...ai };
+  for (const k of UNMASK_FIELDS) if (k in out && typeof out[k] === "string") out[k] = unmask(v, out[k]);
+  return out;
+}
+
+async function askAI(office: any, c: any, profileName = "") {
   const s = await secrets();
   const key = s.OPENAI_API_KEY;
   if (!key || key === "SET_ME") throw new Error("OPENAI_API_KEY غير مضبوط");
 
-  const user = `السياق المسجل للعميل:
-الاسم: [${c.name ?? ""}]
-نوع الطلب: [${c.deal_type ?? ""}]
-نوع العقار: [${c.property_type ?? ""}]
-الميزانية: [${c.budget ?? ""}] [${c.budget_period ?? ""}]
-الحي: [${c.location ?? ""}]
-عدد الغرف: [${c.rooms ?? ""}]
-موعد المعاينة: [${c.appointment ?? ""}]
-الملخص: [${c.summary ?? ""}]
-وضع المحادثة: [${c.mode === "manual" ? "تدخل يدوي" : "آلي"}]
-
-رسالة/رسائل العميل الجديدة:
-${c.buffer}
-
-ادمج الجديد مع المسجل، واعتمد القيمة الجديدة عند التعديل، ولا تخترع شيئاً.
-أعد حساب status من الصفر. أعد JSON فقط.`;
-
+  const v = newVault();
   const messages = [
     { role: "system", content: systemPrompt(office, falState(office) === "ok") },
-    { role: "user", content: user },
+    { role: "user", content: aiUserPrompt(c, v, profileName) },
   ];
   const primary = s.AI_MODEL || FALLBACK_MODEL;
   try {
-    return await callModel(office, key, primary, messages, s.AI_REASONING || "low");
+    return unmaskAI(v, await callModel(office, key, primary, messages, s.AI_REASONING || "low"));
   } catch (e) {
     if (primary === FALLBACK_MODEL) throw e;
     // النموذج الجديد تعطّل: نكمل بالنموذج القديم بدل ما نسلّم العميل لموظف
     await logEvent(office.id, "warn", "ai_fallback", { model: primary, error: String(e).slice(0, 300) });
-    return await callModel(office, key, FALLBACK_MODEL, messages, "");
+    return unmaskAI(v, await callModel(office, key, FALLBACK_MODEL, messages, ""));
   }
 }
 
@@ -299,7 +437,8 @@ async function callModel(office: any, key: string, model: string, messages: unkn
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, ...params, response_format: { type: "json_object" }, messages }),
+    // store:false — لا تُحفظ المحادثة في سجلات المزوّد القابلة للاسترجاع
+    body: JSON.stringify({ model, ...params, store: false, response_format: { type: "json_object" }, messages }),
     signal: AbortSignal.timeout(25_000),
   });
   if (!r.ok) throw new Error(`openai ${model} ${r.status}: ${(await r.text()).slice(0, 300)}`);
@@ -356,7 +495,7 @@ function nextQuestion(p: Record<string, any>) {
 // تطبيع خفيف: بلا تشكيل ولا تطويل، وتوحيد الألف والياء والتاء المربوطة
 const plain = (t: string) =>
   String(t ?? "")
-    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[ً-ْـ]/g, "")
     .replace(/[إأآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
     .replace(/[.!؟?،,؛:«»"'()\-_*~]+/g, " ")
     .replace(/\s+/g, " ").trim().toLowerCase();
@@ -578,7 +717,7 @@ async function processTurn(
 
   let ai: any;
   try {
-    ai = await askAI(office, c);
+    ai = await askAI(office, c, m.name ?? "");
   } catch (e) {
     // تعذّر الفهم الآلي: نسلّم المحادثة للمكتب فوراً وننبّهه — لا يبقى عميل بلا متابعة
     await logEvent(office.id, "error", "ai_failed", { error: String(e).slice(0, 400) });
@@ -630,7 +769,7 @@ async function processTurn(
     let rows: any[] = [];
     if (canList) {
       const districts = String(patch.location ?? "")
-        .split(",").map((x) => x.trim()).filter(Boolean);
+        .split(/[,،]/).map((x) => x.trim()).filter(Boolean); // الفاصلة العربية «،» أيضاً
       const { data: matches } = await db.rpc("match_properties", {
         p_office: office.id,
         p_deal: patch.deal_type ?? null,
@@ -1031,3 +1170,6 @@ Deno.serve(async (req) => {
   });
   return Response.json(r, { status: (r as any).status ?? 200 });
 });
+
+// للاختبارات فقط: دوال الإخفاء وبناء الرسالة (لا تُستدعى من خارج الدالة في التشغيل)
+export const __test = { addressOf, nameUnits, maskText, unmask, unmaskAI, introNames, newVault, aiUserPrompt, systemPrompt };

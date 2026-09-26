@@ -876,6 +876,71 @@ await test("ميزانية بأرقام عربية وفواصل («٤٠٬٠٠٠�
   aiNext = { reply: "هلا فيك، تبي إيجار ولا شراء؟", status: "استفسار عام", mode: "آلي", summary: "عميل جديد" };
 });
 
+// ---------- v5.0: تقليل ما يطلع للذكاء الاصطناعي ----------
+await test("الاسم والجوال والهوية والإيميل ما توصل للذكاء، وترجع القيم الحقيقية للعميل وللقاعدة", async () => {
+  const { T, client } = makeDb(seed);
+  const f = makeFetch(() => ({
+    reply: "هلا أبو {{اسم1}}، وش تبي إيجار ولا شراء؟", name: "أبو {{اسم1}}",
+    summary: "أبو {{اسم1}} أرسل جوال {{جوال1}}", status: "استفسار عام", mode: "آلي",
+  }));
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000301", "معك أبو فهد جوالي 0551234567 وهويتي 1087654321 ايميلي fahad.q@outlook.com ابي شقة ميزانيتي 500000 ريال"));
+  const ai = sent(f, "api.openai.com")[0].body;
+  const all = ai.messages.map((m) => m.content).join("\n");
+  for (const secret of ["فهد", "0551234567", "1087654321", "fahad.q@outlook.com", "966500000301"]) {
+    assert.ok(!all.includes(secret), "leaked to AI: " + secret);
+  }
+  assert.ok(all.includes("أبو {{اسم1}}") && all.includes("{{جوال1}}") && all.includes("{{هوية1}}"), all);
+  assert.ok(all.includes("500000 ريال"), "budget must stay visible");
+  assert.ok(all.includes("مخاطبة العميل: [مذكر]"));
+  assert.equal(ai.store, false);
+  const out = waText(waSent(f)[0]);
+  assert.ok(out.startsWith("هلا أبو فهد، وش تبي"), out);
+  assert.equal(T.customers[0].name, "أبو فهد");
+  assert.ok(T.customers[0].summary.includes("0551234567"), T.customers[0].summary);
+});
+
+await test("رمز مجهول أو محرّف من الذكاء ما يوصل للعميل", async () => {
+  const { client } = makeDb(seed);
+  const f = makeFetch(() => ({ reply: "هلا {{اسم7}}، تبي إيجار ولا شراء؟ {{ جوال 9 }}", status: "استفسار عام", mode: "آلي" }));
+  const { handler } = await loadFunction(FN, client, f);
+  await handler(ultra("966500000302", "السلام عليكم"));
+  const out = waText(waSent(f)[0]);
+  assert.ok(!out.includes("{{") && !out.includes("}}"), out);
+  assert.ok(out.startsWith("هلا، تبي إيجار ولا شراء؟"), out);
+});
+
+await test("الاسم المخزّن والملخص السابق يُخفون قبل الإرسال، والعميلة تُخاطب بالمؤنث", async () => {
+  const { T, client } = makeDb(seed);
+  const f = makeFetch(() => aiNext);
+  const { handler, mod } = await loadFunction(FN, client, f);
+  const v = mod.__test.newVault();
+  const u = mod.__test.aiUserPrompt({ name: "نورة القحطاني", summary: "نورة القحطاني تبحث عن شقة، جوالها 0551112222",
+    buffer: "اسمي نورة ابي شقة", mode: "auto" }, v, "Noura");
+  assert.ok(!/نورة|القحطاني|0551112222|Noura/.test(u), u);
+  assert.ok(u.includes("مخاطبة العميل: [مؤنث]"));
+  assert.ok(u.includes("الاسم: [{{اسم1}} {{اسم2}}]"), u);
+  assert.equal(mod.__test.unmask(v, "هلا {{اسم1}}"), "هلا نورة");
+});
+
+await test("أرقام المبالغ والمساحات ما تُخفى، وأرقام الجوال بأي صيغة تُخفى", async () => {
+  const { client } = makeDb(seed);
+  const { mod } = await loadFunction(FN, client, makeFetch(() => aiNext));
+  const { maskText, newVault } = mod.__test;
+  const m = (t) => maskText(newVault(), t, []);
+  assert.equal(m("ميزانيتي 1500000 ريال"), "ميزانيتي 1500000 ريال");
+  assert.equal(m("الميزانية 500000000"), "الميزانية 500000000");
+  assert.equal(m("ارض 900 متر بـ 3,500,000"), "ارض 900 متر بـ 3,500,000");
+  assert.equal(m("٤ غرف بـ ٤٠ الف"), "٤ غرف بـ ٤٠ الف");
+  assert.equal(m("كلمني 0551234567"), "كلمني {{جوال1}}");
+  assert.equal(m("كلمني +966 55 123 4567"), "كلمني {{جوال1}}");
+  assert.equal(m("كلمني ٠٥٥١٢٣٤٥٦٧"), "كلمني {{جوال1}}");
+  assert.equal(m("الثابت 0114567890"), "الثابت {{رقم1}}");
+  assert.equal(m("اقامتي 2456789012"), "اقامتي {{هوية1}}");
+  assert.equal(m("SA0380000000608010167519 حسابي"), "{{آيبان1}} حسابي");
+  assert.equal(m("هل معك شقق بالياسمين"), "هل معك شقق بالياسمين");
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

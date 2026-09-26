@@ -345,7 +345,7 @@ function load() {
       renderStock();
       renderSettings();
       show("s-today");
-      maybeOnboard();
+      if (termsPending()) openTerms(maybeOnboard); else maybeOnboard();
     }
     S.booted = true;
     // الجهاز مفعّل من قبل (بعد خروج ودخول مثلاً): نعيد تسجيله بصمت
@@ -1144,6 +1144,8 @@ function openProp(id) {
   };
 
   openSheet(p ? "تعديل العقار" : "عقار جديد",
+    (p ? '<button class="btn ghost" type="button" id="pMatches" style="margin-bottom:14px">' + svg(ICON.inbox) +
+      " عملاء سابقون يطابقون هذا العقار</button>" : "") +
     '<div class="field"><label for="pTitle">اسم العقار</label>' +
       '<input id="pTitle" class="input" value="' + esc(v.title || "") + '" placeholder="شقة النرجس A12"></div>' +
     '<div class="grid2">' +
@@ -1159,7 +1161,7 @@ function openProp(id) {
         '<input id="pRooms" class="input" type="number" inputmode="numeric" value="' + esc(v.rooms || "") + '"></div>' +
     "</div>" +
     '<div class="grid2">' +
-      '<div class="field"><label for="pPrice">السعر بالريال</label>' +
+      '<div class="field"><label for="pPrice">السعر بالريال (الإيجار سنوي)</label>' +
         '<input id="pPrice" class="input" type="number" inputmode="numeric" value="' + esc(v.price || "") + '"></div>' +
       '<div class="field"><label for="pState">الحالة</label><select id="pState" class="input">' +
         ["available", "reserved", "rented", "sold"].concat(v.state === "closed" ? ["closed"] : [])
@@ -1178,6 +1180,7 @@ function openProp(id) {
     '<button class="btn" id="pSave">' + (p ? "حفظ التعديلات" : "أضف العقار") + "</button>" +
     '<div id="pMsg"></div>');
 
+  if (p) $("#pMatches").onclick = function () { openPropMatches(p); };
   $("#pSave").onclick = function () {
     var b = this; b.disabled = true; note("#pMsg", "", "");
     call({
@@ -1212,6 +1215,7 @@ function officeIssues(o) {
   else if (f.state === "expired") out.push("رخصة منتهية");
   else if (falSoon(f)) out.push("رخصة تنتهي " + inDaysAr(f.days_left));
   if (!o.wa_linked) out.push("بلا واتساب");
+  if (o.terms_ok === false) out.push("ما وافق على الشروط");
   return out;
 }
 
@@ -2625,15 +2629,18 @@ function openPropWizard(done) {
 
   function submit(b) {
     b.disabled = true; note("#wzMsg", "", "");
+    var saved = null;
     call({ action: "property_save", property: {
       title: (d.title || autoTitle()).trim(), deal_type: d.deal_type, property_type: d.property_type,
       district: d.district.trim(), rooms: isLand() ? "" : d.rooms, price: digits(latinDigits(d.price)), state: "available",
       ad_license_no: digits(latinDigits(d.ad_license_no)), ad_license_expiry: d.ad_license_expiry,
-    } }).then(function () { return call({ action: "properties" }); }).then(function (r) {
+    } }).then(function (sr) { saved = sr; return call({ action: "properties" }); }).then(function (r) {
       lsSet(PROP_DRAFT, null);
       S.props = r.properties || [];
       renderStock(); renderToday();
-      if (done) done(); else closeSheet();
+      if (done) done();
+      else if (saved && saved.matches > 0 && saved.property) openMatchesPrompt(saved.property, saved.matches);
+      else closeSheet();
     }).catch(function (e) { note("#wzMsg", e.message, "err"); b.disabled = false; });
   }
   paint();
@@ -2641,6 +2648,93 @@ function openPropWizard(done) {
 function latinDigits(v) {
   return String(v == null ? "" : v).replace(/[٠-٩]/g, function (x) { return String("٠١٢٣٤٥٦٧٨٩".indexOf(x)); })
     .replace(/[۰-۹]/g, function (x) { return String("۰۱۲۳۴۵۶۷۸۹".indexOf(x)); });
+}
+
+
+/* ---------- اتفاقية معالجة البيانات: موافقة صاحب المكتب مرة لكل نسخة ---------- */
+var TERMS_URL = "https://maqsadapp.com/terms.html#dpa";
+function termsPending() {
+  return isOwnerMe() && !!(S.me && S.me.office && S.me.office.terms) && !S.me.office.terms.ok;
+}
+function openTerms(after) {
+  var t = S.me.office.terms;
+  openSheet("قبل ما تبدأ: بيانات عملائك",
+    '<p class="hint tight">مقصد يعالج بيانات عملائك نيابة عنك، وأنت المسؤول عنها نظاماً. هذي أهم النقاط:</p>' +
+    '<ul class="terms-pts">' +
+      "<li><b>بيانات عملائك لك.</b> نستخدمها لتشغيل المساعد وتنبيهاتك فقط، ولا نبيعها ولا نعطيها لمكتب ثاني ولا نسوّق عليها.</li>" +
+      "<li><b>وين تُحفظ:</b> قاعدة البيانات في ألمانيا. الذكاء الاصطناعي في أمريكا ويوصله نص الطلب بعد ما نخفي الاسم والأرقام.</li>" +
+      "<li><b>مدة الحفظ:</b> نص المحادثات ٩٠ يوماً، وملخص الطلب طوال اشتراكك، وبعد انتهائه نحذف الكل خلال ٩٠ يوماً.</li>" +
+      "<li><b>عليك:</b> تتواصل مع العميل لطلبه العقاري فقط، وتحترم «توقف» و«احذف بياناتي».</li>" +
+      "<li><b>أي حادثة تمس البيانات</b> نبلغك فيها فوراً ونساعدك في إبلاغ الجهة المختصة.</li>" +
+    "</ul>" +
+    '<p class="hint">النص الكامل: <a href="' + TERMS_URL + '" target="_blank" rel="noopener">شروط الاستخدام ← اتفاقية معالجة البيانات</a> · نسخة <span class="num">' + esc(t.version) + "</span></p>" +
+    '<label class="toggle" for="tAgree" style="margin:14px 0"><input id="tAgree" type="checkbox"><span>قرأت الشروط واتفاقية معالجة البيانات وأوافق عليها باسم مكتبي</span></label>' +
+    '<button class="btn" id="tOk" type="button" disabled>موافق</button>' +
+    '<button class="btn ghost" id="tLater" type="button" style="margin-top:8px">لاحقاً</button><div id="tMsg"></div>');
+  var later = function () { closeSheet(); renderToday(); };
+  $("#sheetClose").onclick = later; $("#scrim").onclick = later; $("#tLater").onclick = later;
+  $("#tAgree").onchange = function () { $("#tOk").disabled = !this.checked; };
+  $("#tOk").onclick = function () {
+    var b = this; b.disabled = true; note("#tMsg", "", "");
+    call({ action: "terms_accept", version: t.version }).then(function (r) {
+      S.me.office.terms = r.terms; closeSheet(); renderToday();
+      if (after) after();
+    }).catch(function (e) { note("#tMsg", e.message, "err"); b.disabled = false; });
+  };
+}
+
+/* ---------- عملاء سابقون يطابقون العقار (المكتب يتواصل بنفسه، مقصد ما يرسل شي) ---------- */
+function openMatchesPrompt(prop, n) {
+  openSheet("تمت إضافة العقار",
+    '<div class="matches-cta"><b class="num">' + n + "</b>" +
+      "<p>" + (n === 1 ? "عميل سابق طلب" : "عملاء سابقين طلبوا") + " شي يطابق هذا العقار في آخر ٣٠ يوم</p></div>" +
+    '<button class="btn" id="mcShow" type="button">اعرضهم</button>' +
+    '<button class="btn ghost" id="mcLater" type="button" style="margin-top:8px">لاحقاً</button>');
+  $("#mcShow").onclick = function () { openPropMatches(prop); };
+  $("#mcLater").onclick = closeSheet;
+}
+function matchWaText(c, p) {
+  var office = (S.me && S.me.office && S.me.office.name) || "المكتب";
+  var nm = c.name ? " " + firstName(c.name) : "";
+  var rent = p.deal_type === "إيجار";
+  return "هلا" + nm + "، معك " + office + ". نزل عندنا " + p.property_type + (rent ? " للإيجار" : " للبيع") +
+    " في " + p.district + (p.rooms ? " (" + p.rooms + " غرف)" : "") + " بـ " + money(p.price) + " ريال" + (rent ? " سنوياً" : "") +
+    "، قريب من طلبك. يناسبك أرسل لك التفاصيل؟" + (p.ad_license_no ? "\nرقم ترخيص الإعلان: " + p.ad_license_no : "");
+}
+function openPropMatches(p) {
+  openSheet("عملاء يطابقون العقار", skeleton(3));
+  call({ action: "prop_matches", id: p.id }).then(function (r) {
+    var list = r.customers || [], pr = r.property || p;
+    var licensed = !!pr.ad_license_no && (!pr.ad_license_expiry || pr.ad_license_expiry >= new Date().toISOString().slice(0, 10));
+    var head = '<p class="hint tight">طلبات عملاء مكتبك في آخر <span class="num">' + (r.days || 30) + "</span> يوم تطابق «" +
+      esc(pr.title) + "»: نفس نوع الطلب والعقار والحي، والسعر ضمن ميزانيتهم.</p>";
+    if (!list.length) {
+      openSheet("عملاء يطابقون العقار", head +
+        state(ICON.inbox, "ما فيه عميل مطابق الحين", "لما يطلب عميل شي يشبه هذا العقار بيطلع هنا."));
+      return;
+    }
+    var rows = list.map(function (c) {
+      var sub = [c.location, c.budget ? money(c.budget) + " ريال" + (c.budget_period ? " " + c.budget_period : "") : null,
+        c.rooms ? c.rooms + " غرف" : null, ago(c.last_at)].filter(Boolean).join(" · ");
+      var wa = "https://wa.me/" + digits(c.phone) + (licensed ? "?text=" + encodeURIComponent(matchWaText(c, pr)) : "");
+      return '<div class="pm-row"><div class="main"><b>' + esc(c.name || "عميل") + "</b>" +
+          (c.status === "qualified" ? '<span class="tag ok">مؤهل</span>' : "") +
+          '<span class="s num">' + esc(sub) + "</span></div>" +
+        '<div class="btnrow">' +
+          '<a class="btn sm ghost" href="tel:+' + digits(c.phone) + '">' + svg(ICON.phone) + " اتصال</a>" +
+          '<a class="btn sm wa" href="' + wa + '" target="_blank" rel="noopener">' + svg(ICON.wa) + " واتساب</a>" +
+          '<button class="btn sm ghost" type="button" data-lead="' + esc(c.id) + '">البطاقة</button>' +
+        "</div></div>";
+    }).join("");
+    openSheet("عملاء يطابقون العقار (" + list.length + ")", head +
+      (licensed ? "" : '<p class="msg warn">هذا العقار بلا ترخيص إعلان ساري — اتصل بالعميل واسأله عن طلبه، ولا ترسل تفاصيل العقار قبل ترخيصه.</p>') +
+      '<div class="pm-list">' + rows + "</div>" +
+      '<p class="hint">مقصد ما يرسل لهم أي شي. تواصل فقط مع اللي طلبه ما زال قائم، وإذا قال ما يبي سجّل نتيجته «ما تمت» عشان ما يطلع لك مرة ثانية.</p>');
+    var bs = document.querySelectorAll(".pm-row [data-lead]");
+    for (var i = 0; i < bs.length; i++) bs[i].onclick = function () { openLead(this.getAttribute("data-lead")); };
+  }).catch(function (e) {
+    openSheet("عملاء يطابقون العقار", '<div id="pmMsg"></div>'); note("#pmMsg", e.message, "err");
+  });
 }
 
 /* ---------- أول دخول لصاحب المكتب ---------- */
@@ -2661,6 +2755,9 @@ function maybeOnboard() {
   if (!later) openOnboard(-1);
 }
 function onboardItems() {
+  if (termsPending()) return [{ kind: "warn", icon: ICON.check, title: "وافق على اتفاقية معالجة البيانات",
+    body: "مطلوبة من صاحب المكتب قبل تشغيل المساعد لعملائك — دقيقة وحدة",
+    go: function () { openTerms(); } }];
   if (!isOwnerMe() || S.me.office.onboarded) return [];
   var left = obLeft();
   return [{ kind: "", icon: ICON.check, title: "كمّل تجهيز مكتبك",

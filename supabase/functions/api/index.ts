@@ -1,4 +1,6 @@
-// مقصد — واجهة المنصة (v13)
+// مقصد — واجهة المنصة (v14)
+// v14: عملاء سابقون يطابقون العقار (للمكتب نفسه فقط، آخر ٣٠ يوماً، بلا إرسال آلي) · موافقة صاحب المكتب على
+//      الشروط واتفاقية معالجة البيانات من داخل التطبيق (النسخة والتاريخ ومن وافق)
 // v13: لوحة المدير — جلسة المدير ٧ أيام، سجل لكل تعديل يسويه المدير، نموذج الذكاء والصوتيات من اللوحة.
 //      رخصة فال: صورة الرخصة من طلب الانضمام تنتقل للمكتب، والمكتب يطلب التعديل بصورة (المدير وحده يعدّل).
 //      خطوات أول دخول للمكتب (onboarding) · إضافة العقار تقبل ترخيص الإعلان من الخطوات
@@ -399,11 +401,14 @@ function voiceSet(s: Record<string, string>) {
   return new Set(String(s.VOICE_OFFICES ?? "").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean));
 }
 
+// نسخة الشروط واتفاقية معالجة البيانات الحالية — تغييرها يطلب من كل مكتب الموافقة من جديد
+const TERMS_VERSION = "2026-09-26";
+
 async function officesFor() {
   const { data } = await db.from("offices")
     .select("id,code,name,license_no,wa_number,wa_provider,wa_instance,active,msg_quota,telegram_chat_id," +
             "fal_status,fal_expires_on,fal_holder_name,fal_verified_at,fal_note,fal_proof_path," +
-            "fal_signup_proof,fal_request,onboarded_at,created_at")
+            "fal_signup_proof,fal_request,onboarded_at,created_at,terms_version,terms_accepted_at")
     .order("created_at");
   const voice = voiceSet(await secrets());
   return Promise.all((data ?? []).map(async (o: any) => {
@@ -418,6 +423,7 @@ async function officesFor() {
       voice: voice.has("*") || voice.has(String(o.code).toUpperCase()),
       has_signup_proof: !!fal_signup_proof,
       fal_request: fal_request ? { note: fal_request.note ?? null, at: fal_request.at, by: fal_request.by ?? null } : null,
+      terms_ok: o.terms_version === TERMS_VERSION,
     };
   }));
 }
@@ -557,6 +563,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       fal: falInfo(office),
       onboarded: !!office.onboarded_at, onboarding: office.onboarding ?? {},
       fal_request: office.fal_request ? { at: office.fal_request.at, note: office.fal_request.note ?? null } : null,
+      terms: { version: TERMS_VERSION, ok: office.terms_version === TERMS_VERSION, at: office.terms_accepted_at ?? null },
     },
   });
 
@@ -925,6 +932,19 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       return json({ ok: true, offices: await officesFor() });
     }
 
+    // ===== موافقة صاحب المكتب على الشروط واتفاقية معالجة البيانات =====
+    // صاحب المكتب نفسه فقط (المدير ما يوافق نيابة عنه)؛ يُحفظ رقم النسخة والتاريخ ومن وافق
+    case "terms_accept": {
+      if (ctx.staff.role !== "owner") return json({ error: "الموافقة لصاحب المكتب فقط" }, 403);
+      if (b.version !== TERMS_VERSION) return json({ error: "نسخة الشروط تغيّرت، حدّث الصفحة" }, 409);
+      const at = new Date().toISOString();
+      await db.from("offices").update({ terms_version: TERMS_VERSION, terms_accepted_at: at, terms_accepted_by: ctx.staff.id })
+        .eq("id", oid);
+      await db.from("events").insert({ office_id: oid, kind: "terms_accepted",
+        detail: { by: ctx.staff.name, staff: ctx.staff.id, version: TERMS_VERSION } });
+      return json({ ok: true, terms: { version: TERMS_VERSION, ok: true, at } });
+    }
+
     // خطوات أول دخول: الخطوات المنجزة، وإنهاؤها أو تخطيها
     case "onboarding_save": {
       if (!isOwner) return json({ error: "forbidden" }, 403);
@@ -1082,7 +1102,26 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
         ? await db.from("properties").update(row).eq("office_id", oid).eq("id", p.id).select().maybeSingle()
         : await db.from("properties").insert(row).select().maybeSingle();
       if (res.error) return json({ error: res.error.message }, 400);
-      return json({ ok: true, property: res.data });
+      // عقار جديد: كم عميل سابق يطابقه (المكتب يشوفهم ويقرر بنفسه)
+      let matches = 0;
+      if (!p.id && res.data?.id) {
+        const { data: m } = await db.rpc("match_customers", { p_office: oid, p_property: res.data.id, p_days: 30, p_limit: 50 });
+        matches = (m ?? []).length;
+      }
+      return json({ ok: true, property: res.data, matches });
+    }
+
+    // ===== عملاء سابقون يطابقون عقاراً: طلبات عملاء المكتب نفسه في آخر ٣٠ يوماً =====
+    // لا إرسال آلي: المكتب يتصل أو يراسل بنفسه. يُستبعد من كتب «توقف» ومن أُغلق طلبه
+    case "prop_matches": {
+      const { data: prop } = await db.from("properties").select("id,title,deal_type,property_type,district,price,rooms,ad_license_no,ad_license_expiry")
+        .eq("office_id", oid).eq("id", b.id).maybeSingle();
+      if (!prop) return json({ error: "not_found" }, 404);
+      const { data, error } = await db.rpc("match_customers", { p_office: oid, p_property: prop.id, p_days: 30, p_limit: 30 });
+      if (error) return json({ error: "تعذّر البحث الآن" }, 500);
+      await db.from("events").insert({ office_id: oid, kind: "prop_matches",
+        detail: { by: ctx.staff.name, property: prop.id, n: (data ?? []).length } });
+      return json({ property: prop, customers: data ?? [], days: 30 });
     }
 
     // ===== نتيجة الاتصال: يسجّلها أي موظف في المكتب =====

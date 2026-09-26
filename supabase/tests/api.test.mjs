@@ -694,6 +694,41 @@ await test("v13: صاحب المكتب يضيف وسيط لمكتبه فقط، �
   assert.equal((await call(h, { action: "staff_save", staff: { name: "x", phone: "0551113333" } }, "s2")).status, 403);
 });
 
+await test("v14: عقار جديد يرجّع عدد العملاء السابقين المطابقين، وقائمتهم للمكتب نفسه فقط", async () => {
+  const { T, h } = await boot((d) => { d.offices[1].active = true; d.__custMatches = [{ id: "c1", name: "عميل 1", phone: "966500000011", score: 60 }]; });
+  let r = await call(h, { action: "property_save", property: { title: "شقة", district: "النرجس", price: 42000, deal_type: "إيجار", property_type: "شقة" } }, "s2");
+  assert.equal(r.status, 200); assert.equal(r.body.matches, 1);
+  const pid = r.body.property.id;
+  assert.equal(T.__custCalls[0].p_office, "o1"); assert.equal(T.__custCalls[0].p_days, 30);
+  r = await call(h, { action: "prop_matches", id: pid }, "s2");
+  assert.equal(r.status, 200); assert.equal(r.body.customers.length, 1); assert.equal(r.body.days, 30);
+  assert.ok(T.events.some((e) => e.kind === "prop_matches" && e.detail.n === 1));
+  // مكتب ثاني ما يشوف عقار غيره
+  r = await call(h, { action: "prop_matches", id: pid }, "s3");
+  assert.equal(r.status, 404);
+  // تعديل عقار قائم ما يعيد البحث
+  const before = T.__custCalls.length;
+  r = await call(h, { action: "property_save", property: { id: pid, title: "شقة", district: "النرجس", price: 41000 } }, "s2");
+  assert.equal(r.body.matches, 0); assert.equal(T.__custCalls.length, before);
+});
+
+await test("v14: موافقة صاحب المكتب على الشروط تُحفظ بالنسخة والتاريخ، والوسيط والمدير ما يوافقون عنه", async () => {
+  const { T, h } = await boot();
+  let me = await call(h, { action: "me" }, "s1");
+  assert.equal(me.body.office.terms.ok, false);
+  const v = me.body.office.terms.version;
+  assert.equal((await call(h, { action: "terms_accept", version: v }, "s2")).status, 403);
+  assert.equal((await call(h, { action: "terms_accept", version: v, office_id: "o1" }, "sa")).status, 403);
+  assert.equal((await call(h, { action: "terms_accept", version: "old" }, "s1")).status, 409);
+  const r = await call(h, { action: "terms_accept", version: v }, "s1");
+  assert.equal(r.status, 200);
+  const o1 = T.offices.find((o) => o.id === "o1");
+  assert.equal(o1.terms_version, v); assert.equal(o1.terms_accepted_by, "s1"); assert.ok(o1.terms_accepted_at);
+  me = await call(h, { action: "me" }, "s2");
+  assert.equal(me.body.office.terms.ok, true);
+  assert.ok(T.events.some((e) => e.kind === "terms_accepted" && e.detail.version === v));
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
