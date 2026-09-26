@@ -1,4 +1,5 @@
-// مقصد — استقبال طلبات الانضمام من الموقع (v1.1)
+// مقصد — استقبال طلبات الانضمام من الموقع والتطبيق (v1.2)
+// v1.2: رقم رخصة فال وصورتها (صورة أو PDF) إلزامية — تُحفظ في مخزن خاص ولا يفتحها إلا المدير
 // نموذج عام: بلا جلسة، بحماية من الإغراق (فخ للبرامج الآلية + حد لكل عنوان + منع التكرار)
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -52,6 +53,23 @@ function saudiMobile(v: unknown): string | null {
 const text = (v: unknown, max: number) =>
   String(v ?? "").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
+// ملف رخصة فال: صورة (PNG/JPG/WEBP) أو PDF حقيقي — تُفحص بصمة الملف لا اسمه — بحد ٣ ميجابايت
+const BUCKET = "fal-proofs";
+type Up = { bytes: Uint8Array; mime: string; ext: string };
+function parseUpload(v: unknown): Up | null {
+  const m = /^data:([a-z]+\/[a-z+.-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(v ?? ""));
+  if (!m) return null;
+  let bin = "";
+  try { bin = atob(m[2].replace(/\s/g, "")); } catch { return null; }
+  if (bin.length < 1024 || bin.length > 3 * 1024 * 1024) return null;
+  const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  if (bin.slice(0, 5) === "%PDF-") return { bytes, mime: "application/pdf", ext: "pdf" };
+  if (bytes[0] === 0x89 && bin.slice(1, 4) === "PNG") return { bytes, mime: "image/png", ext: "png" };
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { bytes, mime: "image/jpeg", ext: "jpg" };
+  if (bin.slice(0, 4) === "RIFF" && bin.slice(8, 12) === "WEBP") return { bytes, mime: "image/webp", ext: "webp" };
+  return null;
+}
+
 const AGENTS = ["1", "2-5", "6-15", "16+"];
 
 async function operatorChat(): Promise<string | null> {
@@ -90,6 +108,9 @@ Deno.serve(async (req) => {
   }
 
   const errors: Record<string, string> = {};
+  // النماذج الجديدة (v=2) ترسل صورة الرخصة إلزامياً. نموذج الموقع القديم (بلا v) يُقبل بدونها
+  // لين يُرفع الموقع الجديد، وبعدها يُحذف هذا الاستثناء
+  const legacy = b.v === undefined && b.fal_file === undefined;
   const office_name = text(b.office_name, 120);
   const contact_name = text(b.contact_name, 80);
   const phone = saudiMobile(b.phone);
@@ -102,9 +123,10 @@ Deno.serve(async (req) => {
   if (office_name.length < 2) errors.office_name = "اكتب اسم المكتب";
   if (contact_name.length < 2) errors.contact_name = "اكتب اسمك";
   if (!phone) errors.phone = "اكتب رقم جوال سعودي يبدأ بـ 05";
-  if (fal_license && (fal_license.length < 4 || fal_license.length > 20)) {
-    errors.fal_license = "رقم رخصة فال أرقام فقط";
-  }
+  if (!fal_license && !legacy) errors.fal_license = "اكتب رقم رخصة فال";
+  else if (fal_license && (fal_license.length < 4 || fal_license.length > 20)) errors.fal_license = "رقم رخصة فال أرقام فقط";
+  const upload = legacy ? null : parseUpload(b.fal_file);
+  if (!legacy && !upload) errors.fal_file = b.fal_file ? "الملف لازم يكون صورة أو PDF، وحجمه أقل من ٣ ميجابايت" : "أرفق صورة رخصة فال";
   if (b.consent !== true) errors.consent = "الموافقة على سياسة الخصوصية مطلوبة لإرسال الطلب";
   if (Object.keys(errors).length) return json({ error: "راجع الحقول المظللة", fields: errors }, 422);
 
@@ -125,8 +147,19 @@ Deno.serve(async (req) => {
     .eq("phone", phone!).gte("created_at", since);
   if ((samePhone ?? 0) > 0) return json({ ok: true, duplicate: true });
 
+  // الملف يُحفظ قبل الطلب: إذا فشل الحفظ نرجع خطأ بدل طلب بلا رخصة
+  const fal_proof_path = upload
+    ? `signups/${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}.${upload.ext}` : null;
+  const { error: upErr } = upload
+    ? await db.storage.from(BUCKET).upload(fal_proof_path!, upload.bytes, { contentType: upload.mime, upsert: false })
+    : { error: null };
+  if (upErr) {
+    await db.from("events").insert({ level: "error", kind: "signup_upload_failed", detail: { error: upErr.message } });
+    return json({ error: "تعذّر رفع صورة الرخصة الآن، حاول بعد دقيقة" }, 500);
+  }
+
   const { data: row, error } = await db.from("signup_requests").insert({
-    office_name, contact_name, phone, city, fal_license, agents, note, ip_hash,
+    office_name, contact_name, phone, city, fal_license, agents, note, ip_hash, fal_proof_path,
   }).select("id").single();
   if (error) {
     await db.from("events").insert({ level: "error", kind: "signup_insert_failed",
@@ -137,11 +170,11 @@ Deno.serve(async (req) => {
   await db.from("events").insert({ level: "info", kind: "signup_request", detail: { id: row.id } });
 
   await tell(
-    `🆕 طلب انضمام من موقع مقصد\n\n` +
+    `🆕 طلب انضمام لمقصد\n\n` +
     `🏢 ${office_name}\n👤 ${contact_name}\n📱 ${phone}\n` +
-    `📍 ${city ?? "—"}\n🪪 فال: ${fal_license ?? "لم يُذكر"}\n👥 الوسطاء: ${agents ?? "—"}\n` +
+    `📍 ${city ?? "—"}\n🪪 فال: ${fal_license ?? "لم يُذكر"}${fal_proof_path ? " (صورة الرخصة مرفقة في المنصة)" : ""}\n👥 الوسطاء: ${agents ?? "—"}\n` +
     (note ? `📝 ${note}\n` : "") +
-    `\n🔗 https://wa.me/${phone}\n\nتجده في منصة مقصد ← المكاتب ← طلبات الانضمام.`,
+    `\n🔗 https://wa.me/${phone}\n\nتجده في منصة مقصد ← طلبات الانضمام.`,
   );
 
   return json({ ok: true });

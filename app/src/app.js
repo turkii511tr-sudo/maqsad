@@ -18,6 +18,8 @@ var S = {
   signups: [], signupFilter: "new", signupsNew: 0,
   pre: null, booted: false,
   month: {}, monthSel: "cur", usage: {}, usageSel: "cur",
+  // لوحة المدير: «platform» = لوحة المنصة، «office» = داخل مكتب
+  mode: "office", own: null, pstatus: null, officeFilter: "all", officeQuery: "",
 };
 
 /* ---------- أدوات ---------- */
@@ -183,7 +185,8 @@ function riyadhDay() { return new Date(Date.now() + 3 * 3600e3).toISOString().sl
 var NO_OID = ["request_otp", "verify_otp", "redeem", "ping",
               "offices_list", "office_save", "backups_status",
               "signup_list", "signup_update",
-              "fal_get", "fal_verify", "fal_reject", "fal_proof"];
+              "fal_get", "fal_verify", "fal_reject", "fal_proof",
+              "admin_log", "platform_save", "signup_proof", "fal_request_close"];
 
 function call(body, retried) {
   if (S.curOffice && NO_OID.indexOf(body.action) === -1) body.office_id = S.curOffice;
@@ -324,17 +327,26 @@ function load() {
     S.signupsNew = r.signups_new || 0;
     S.pre.leads = null; S.pre.properties = null; S.pre.status = null;
 
+    S.own = r.office; S.pstatus = S.status;
     $("#auth").hidden = true; $("#app").hidden = false;
-    $("#navOffices").hidden = !S.isSuper;
-    $("#keysBlock").hidden = !S.isSuper;
     $("#dataBlock").hidden = !(S.isSuper || (r.staff && r.staff.role === "owner"));
 
-    paintHeader();
-    renderToday();
-    renderLeads();
-    renderStock();
-    renderSettings();
-    if (S.isSuper) { renderOffices(); loadBackups(); loadSignups(); loadUsage(); }
+    if (S.isSuper) {
+      // المدير يفتح على لوحة المنصة، ويدخل أي مكتب منها
+      S.curOffice = null;
+      setMode("platform");
+      renderHome(); renderOffices(); renderPlatform();
+      loadBackups(); loadSignups(); loadUsage(); loadAdminLog();
+      show("s-home");
+    } else {
+      setMode("office");
+      renderToday();
+      renderLeads();
+      renderStock();
+      renderSettings();
+      show("s-today");
+      maybeOnboard();
+    }
     S.booted = true;
     // الجهاز مفعّل من قبل (بعد خروج ودخول مثلاً): نعيد تسجيله بصمت
     ntProbe().then(function () {
@@ -348,8 +360,21 @@ function load() {
   });
 }
 
+// «أبو فيصل» و«أم خالد» تبقى كاملة
+function firstName(n) {
+  var w = String(n || "").trim().split(/\s+/);
+  return /^(أبو|ابو|أم|ام|بن|آل)$/.test(w[0]) && w[1] ? w[0] + " " + w[1] : w[0];
+}
 function paintHeader() {
   var o = S.me.office, st = S.me.staff;
+  if (S.isSuper && S.mode === "platform") {
+    $("#topOffice").textContent = "منصة مقصد";
+    $("#topStaff").textContent = st.name + " · مدير المنصة";
+    var hr = new Date().getHours();
+    $("#homeGreet").textContent = (hr < 12 ? "صباح الخير" : "مساء الخير") + "، " + firstName(st.name);
+    $("#homeDate").textContent = new Date().toLocaleDateString("ar-SA", { weekday: "long", day: "numeric", month: "long" });
+    return;
+  }
   $("#topOffice").textContent = o.name;
   $("#topStaff").textContent = st.name + " · " +
     (st.role === "super_admin" ? "مشغّل المنصة" : st.role === "owner" ? "صاحب المكتب" : "وسيط");
@@ -378,7 +403,7 @@ function licenseBlocked(p) { return !p.listable && p.state === "available"; }
 // رخصة فال في «يحتاج انتباهك»: للمكتب حالة رخصته، ولمشغّل المنصة كل المكاتب اللي تحتاج تحقق
 function falItems() {
   var out = [];
-  if (S.isSuper) {
+  if (S.isSuper && S.mode === "platform") {
     var need = S.offices.filter(function (o) {
       var f = falOf(o);
       return o.active !== false && (f.state !== "ok" || falSoon(f));
@@ -401,14 +426,14 @@ function falItems() {
   if (f.state === "pending") {
     out.push({ kind: "hot", icon: ICON.alert, title: "المساعد الآلي متوقف",
       body: "بانتظار تحقق مقصد من رخصة فال — ما يرد على العملاء قبلها",
-      why: owner ? "أرسل صورة شهادة فال لمقصد" : "صاحب المكتب يرسل شهادة فال لمقصد", go: toSet });
+      why: owner ? "ارفع صورة الرخصة من الإعدادات" : "صاحب المكتب يرفع صورة الرخصة من الإعدادات", go: toSet });
   } else if (f.state === "rejected") {
     out.push({ kind: "hot", icon: ICON.alert, title: "رخصة فال غير معتمدة",
       body: f.note || "المساعد الآلي متوقف", why: "صحّح السبب وأرسل شهادة فال سارية لمقصد", go: toSet });
   } else if (f.state === "expired") {
     out.push({ kind: "hot", icon: ICON.alert, title: "رخصة فال منتهية",
       body: "المساعد يستقبل الطلبات لكن ما يعرض عقاراتك",
-      why: "جدّدها وأرسل الشهادة الجديدة لمقصد", go: toSet });
+      why: "جدّدها وارفع الرخصة الجديدة من الإعدادات", go: toSet });
   } else if (falSoon(f)) {
     out.push({ kind: "warn", icon: ICON.clock, title: "رخصة فال تنتهي " + inDaysAr(f.days_left),
       body: gDate(f.expires_on), why: "جدّدها قبل ما يوقف عرض العقارات", go: toSet });
@@ -757,36 +782,8 @@ function renderToday() {
       });
     });
 
-  if (S.isSuper && S.signupsNew > 0) {
-    items.push({
-      kind: "", icon: ICON.inbox,
-      title: S.signupsNew + (S.signupsNew === 1 ? " طلب انضمام جديد" : " طلبات انضمام جديدة"),
-      body: "مكاتب عبّأت نموذج الموقع وتنتظر تواصلك",
-      why: "المكاتب ← طلبات الانضمام",
-      go: function () { show("s-offices"); },
-    });
-  }
-
-  if (S.isSuper && S.status) {
-    if (!S.status.whatsapp) items.push({
-      kind: "hot", icon: ICON.alert, title: "واتساب غير مربوط",
-      body: "لا يستقبل البوت رسائل ولا تصل رموز الدخول",
-      why: "الإعدادات ← توكن UltraMsg",
-      go: function () { show("s-set"); },
-    });
-    if (!S.status.openai) items.push({
-      kind: "hot", icon: ICON.key, title: "مفتاح الذكاء الاصطناعي ناقص",
-      body: "البوت لا يستطيع فهم رسائل العملاء",
-      why: "الإعدادات ← مفتاح OpenAI",
-      go: function () { show("s-set"); },
-    });
-    if (!S.status.telegram) items.push({
-      kind: "warn", icon: ICON.alert, title: "تنبيهات تيليجرام غير مفعّلة",
-      body: "لن يصلك إشعار فوري بالعميل المؤهل",
-      why: "الإعدادات ← توكن بوت تيليجرام",
-      go: function () { show("s-set"); },
-    });
-  }
+  // تذكير خطوات البداية لين يخلّصها صاحب المكتب
+  items = onboardItems().concat(items);
 
   S.props.forEach(function (p) {
     var d = daysTo(p.ad_license_expiry);
@@ -814,16 +811,19 @@ function renderToday() {
 
   $("#navDot").hidden = waiting === 0;
 
-  var host = $("#attnList");
+  paintAttn($("#attnList"), items, "ما فيه عميل ينتظر ولا تنبيه مفتوح. البوت يشتغل ويجمع لك الطلبات.");
+  loadGap(); renderMonth();
+}
+
+function paintAttn(host, items, calm) {
   if (!items.length) {
-    host.innerHTML = state(ICON.check, "كل شي تمام",
-      "ما فيه عميل ينتظر ولا تنبيه مفتوح. البوت يشتغل ويجمع لك الطلبات.");
-    loadGap(); renderMonth();
+    host.className = "";
+    host.innerHTML = state(ICON.check, "كل شي تمام", calm);
     return;
   }
   host.innerHTML = "";
   host.className = items.length > 2 ? "attn-grid" : "";
-  items.slice(0, 8).forEach(function (it) {
+  items.slice(0, 10).forEach(function (it) {
     var b = el("button", "attn " + it.kind,
       '<div class="ic">' + svg(it.icon) + "</div>" +
       '<div class="body"><b>' + esc(it.title) + "</b>" +
@@ -833,8 +833,6 @@ function renderToday() {
     b.onclick = it.go;
     host.appendChild(b);
   });
-
-  loadGap(); renderMonth();
 }
 
 /* ---------- أداء المكتب: هذا الشهر / الشهر الماضي ---------- */
@@ -1204,41 +1202,223 @@ function openProp(id) {
 /* ==========================================================================
    المكاتب — مشغّل المنصة
    ========================================================================== */
+// المكتب يحتاج انتباه المدير: رخصة، طلب تعديل، أو واتساب غير مربوط
+function officeIssues(o) {
+  if (o.active === false) return [];
+  var f = falOf(o), out = [];
+  if (o.fal_request) out.push("طلب تعديل رخصة");
+  if (f.state === "pending") out.push("رخصة بانتظار التحقق");
+  else if (f.state === "rejected") out.push("رخصة مرفوضة");
+  else if (f.state === "expired") out.push("رخصة منتهية");
+  else if (falSoon(f)) out.push("رخصة تنتهي " + inDaysAr(f.days_left));
+  if (!o.wa_linked) out.push("بلا واتساب");
+  return out;
+}
+
+function officeMatches(o) {
+  var f = S.officeFilter;
+  if (f === "attn" && !officeIssues(o).length) return false;
+  if (f === "on" && o.active === false) return false;
+  if (f === "off" && o.active !== false) return false;
+  var q = (S.officeQuery || "").trim().toLowerCase();
+  if (!q) return true;
+  return [o.name, o.code, o.license_no].some(function (v) { return String(v || "").toLowerCase().indexOf(q) > -1; });
+}
+
 function renderOffices() {
   if (!S.isSuper) return;
-  $("#officesCount").textContent = S.offices.length + " مكتب";
-
-  var open = S.offices.filter(function (o) { return o.id === S.curOffice; })[0];
-  var badge = $("#openBadge");
-  badge.hidden = !open;
-  if (open) {
-    badge.innerHTML = '<span class="tag brand">تعمل الآن داخل: ' + esc(open.name) + "</span>";
-  }
+  var active = S.offices.filter(function (o) { return o.active !== false; }).length;
+  $("#officesCount").textContent = S.offices.length + " مكتب · " + active + " شغّال";
+  var attn = S.offices.filter(function (o) { return officeIssues(o).length; }).length;
+  $("#navOfficesDot").hidden = attn === 0;
 
   var host = $("#officesList");
-  if (!S.offices.length) {
-    host.outerHTML = state(ICON.home, "لا يوجد مكتب", "أضف أول مكتب لتبدأ.");
-    return;
-  }
+  var list = S.offices.filter(officeMatches);
+  if (!S.offices.length) { host.innerHTML = state(ICON.home, "لا يوجد مكتب", "أضف أول مكتب لتبدأ."); return; }
+  if (!list.length) { host.innerHTML = state(ICON.home, "ما فيه نتائج", "غيّر البحث أو الفلتر."); return; }
   host.innerHTML = "";
-  S.offices.forEach(function (o) {
+  list.forEach(function (o) {
+    var issues = officeIssues(o);
     var sub = (o.wa_linked ? '<i class="stt ok"></i>واتساب مربوط' : '<i class="stt off"></i>بلا واتساب') +
       " · " + (o.leads || 0) + " عميل · " + (o.props || 0) + " عقار";
-    var row = el("div", "row static",
-      '<div class="main"><span class="t">' + esc(o.name) +
-        (o.id === S.curOffice ? " ✓" : "") + "</span>" +
+    var tags = (o.active === false ? '<span class="tag mute">موقوف</span>' : "") + falTag(o.fal) +
+      (o.fal_request ? '<span class="tag hot">طلب تعديل رخصة</span>' : "") +
+      (o.voice ? '<span class="tag brand">الصوتيات</span>' : "");
+    var row = el("div", "row static office-row" + (issues.length ? " needs" : ""),
+      '<div class="main"><span class="t">' + esc(o.name) + "</span>" +
       '<span class="s">' + esc(o.code) + " · فال " + '<span class="ltr num">' + esc(o.license_no || "—") + "</span></span>" +
-      '<span class="s fal-line">' + falTag(o.fal) + "</span>" +
+      '<span class="s fal-line">' + tags + "</span>" +
       '<span class="s">' + sub + "</span></div>");
     var end = el("div", "end");
-    var bOpen = el("button", "btn sm", "افتح");
+    var bOpen = el("button", "btn sm", "ادخل");
     var bEdit = el("button", "btn ghost sm", "تعديل");
+    bOpen.title = "افتح عملاء المكتب وعقاراته وإعداداته";
     bOpen.onclick = function () { switchOffice(o, bOpen); };
     bEdit.onclick = function () { openOffice(o); };
     end.appendChild(bOpen); end.appendChild(bEdit);
     row.appendChild(end);
     host.appendChild(row);
   });
+}
+
+/* ==========================================================================
+   لوحة المنصة — للمدير فقط
+   ========================================================================== */
+function setMode(m) {
+  S.mode = m;
+  var tabs = document.querySelectorAll(".nav button[data-mode]");
+  for (var i = 0; i < tabs.length; i++) tabs[i].hidden = tabs[i].dataset.mode !== m;
+  var inside = S.isSuper && m === "office";
+  $("#inOffice").hidden = !inside;
+  if (inside) $("#inOfficeName").textContent = S.me.office.name;
+  document.body.classList.toggle("in-office", inside);
+  document.body.classList.toggle("platform", m === "platform");
+  paintHeader();
+}
+
+function exitOffice() {
+  S.curOffice = null; S.pre = null; S.month = {};
+  S.me.office = S.own; S.leads = []; S.props = []; S.status = S.pstatus;
+  closeSheet();
+  setMode("platform");
+  renderHome(); renderOffices();
+  show("s-home");
+  loadAdminLog();
+}
+
+function refreshPlatform() {
+  return Promise.all([call({ action: "offices_list" }), call({ action: "settings_status" })]).then(function (r) {
+    S.offices = r[0].offices || S.offices;
+    if (!S.curOffice) { S.pstatus = r[1]; }
+    renderOffices(); renderPlatform(); renderHome();
+  });
+}
+
+var MODEL_AR = { "gpt-6-luna": "GPT-6 Luna", "gpt-4o-mini": "GPT-4o mini" };
+
+function renderHome() {
+  if (!S.isSuper) return;
+  paintHeader();
+  var ps = S.pstatus || {};
+  var act = S.offices.filter(function (o) { return o.active !== false; });
+  var u = S.usage[riyadhMonth(0)];
+  var t = (u && u.totals) || null;
+  $("#homeStats").innerHTML =
+    stat(act.length, "مكتب شغّال", act.length ? "br" : "mute") +
+    stat(S.signupsNew || 0, "طلب انضمام جديد", S.signupsNew ? "hot" : "mute") +
+    stat(t ? n0(t.new_customers) : "…", "عميل جديد هالشهر", t && n0(t.new_customers) ? "ok" : "mute") +
+    stat(t ? sar(t.cost_usd) : "…", "تكلفة الشهر (ريال)", "mute");
+
+  var items = [];
+  S.offices.forEach(function (o) {
+    if (o.active === false) return;
+    var f = falOf(o);
+    if (o.fal_request) items.push({ kind: "hot", icon: ICON.inbox, title: "طلب تعديل رخصة: " + o.name,
+      body: o.fal_request.note || "صاحب المكتب رفع رخصة جديدة", why: "طابقها مع استعلام الهيئة ← تعديل المكتب",
+      go: function () { openOffice(o); } });
+    if (f.state === "pending" || f.state === "rejected" || f.state === "expired") {
+      items.push({ kind: f.state === "expired" ? "warn" : "hot", icon: ICON.alert,
+        title: o.name + ": " + (FAL_STATE[f.state] || FAL_STATE.pending)[0],
+        body: f.state === "expired" ? "المساعد يستقبل الطلبات بلا عرض عقارات" : "المساعد ما يرد على عملاء المكتب",
+        why: "تعديل المكتب ← رخصة فال", go: function () { openOffice(o); } });
+    } else if (falSoon(f)) {
+      items.push({ kind: "warn", icon: ICON.clock, title: o.name + ": فال تنتهي " + inDaysAr(f.days_left),
+        body: "ذكّر المكتب يجدّد ويرسل الرخصة الجديدة", why: "تعديل المكتب ← رخصة فال", go: function () { openOffice(o); } });
+    }
+    if (!o.wa_linked) items.push({ kind: "warn", icon: ICON.wa, title: o.name + ": واتساب غير مربوط",
+      body: "المساعد ما يستقبل رسائل عملاء هالمكتب", why: "تعديل المكتب ← ربط الواتساب", go: function () { openOffice(o); } });
+  });
+  if (S.signupsNew > 0) items.unshift({ kind: "", icon: ICON.inbox,
+    title: S.signupsNew + (S.signupsNew === 1 ? " طلب انضمام جديد" : " طلبات انضمام جديدة"),
+    body: "مكاتب تنتظر تواصلك، ومعها صورة رخصة فال", why: "الطلبات", go: function () { show("s-signups"); } });
+  if (!ps.openai) items.unshift({ kind: "hot", icon: ICON.key, title: "مفتاح الذكاء الاصطناعي ناقص",
+    body: "المساعد ما يقدر يفهم رسائل العملاء", why: "المنصة ← الربط والمفاتيح", go: function () { show("s-platform"); } });
+  if (!ps.telegram) items.push({ kind: "warn", icon: ICON.tg, title: "بوت تيليجرام غير مضبوط",
+    body: "ما توصل تنبيهات تيليجرام للمكاتب ولا لك", why: "المنصة ← الربط والمفاتيح", go: function () { show("s-platform"); } });
+  else if (ps.operator_tg === false) items.push({ kind: "warn", icon: ICON.tg, title: "تنبيهات المنصة ما توصلك",
+    body: "اربط محادثتك الخاصة في بوت تيليجرام عشان يوصلك كل طلب انضمام وكل عطل", why: "يحتاج رابط ربط لمرة وحدة من بوت مقصد",
+    go: function () { show("s-platform"); } });
+  paintAttn($("#homeAttn"), items, "كل المكاتب شغّالة وما فيه طلب ينتظرك.");
+  $("#navHomeDot").hidden = !items.some(function (x) { return x.kind === "hot"; });
+
+  var dot = function (ok, label, okText, badText) {
+    return "<div><dt>" + esc(label) + "</dt><dd>" + (ok ? '<span class="tag ok">' + esc(okText || "جاهز") + "</span>"
+      : '<span class="tag danger">' + esc(badText || "ناقص") + "</span>") + "</dd></div>";
+  };
+  $("#homeServices").innerHTML =
+    dot(ps.openai, "فهم الرسائل", MODEL_AR[ps.ai_model] || ps.ai_model || "جاهز") +
+    dot(ps.telegram, "تيليجرام") +
+    dot(ps.meta, "واتساب الرسمي (ميتا)", "مربوط", "غير مربوط") +
+    dot(ps.otp_platform, "رموز الدخول من رقم المنصة", "جاهزة", "من رقم المكتب");
+}
+
+function renderPlatform() {
+  if (!S.isSuper) return;
+  var s = S.pstatus || {};
+  $("#aiModel").value = s.ai_model || "gpt-4o-mini";
+  $("#aiEffort").value = s.ai_reasoning || "low";
+  var mark = function (id, ok) {
+    var n = $(id); n.value = "";
+    n.placeholder = ok ? "••••••  محفوظ ✓  (اتركه فارغاً لعدم التغيير)" : "غير مضبوط — الصق القيمة";
+  };
+  mark("#kOpenai", s.openai); mark("#kTg", s.telegram); mark("#kMetaSecret", s.meta);
+  $("#kMetaVerify").value = "";
+  $("#kMetaVerify").placeholder = s.meta ? "محفوظ ✓ (اتركه فارغاً لعدم التغيير)" : "اختر أي كلمة سرية";
+  $("#kHook").value = s.meta_webhook || "";
+  mark("#kPlatTok", s.otp_platform);
+  $("#kPlatId").value = s.platform_phone_id || "";
+  $("#kOtpTpl").value = s.otp_template || "";
+}
+
+function saveAi(b) {
+  b.disabled = true; note("#aiMsg", "", "");
+  call({ action: "platform_save", ai_model: $("#aiModel").value, ai_reasoning: $("#aiEffort").value })
+    .then(function () { note("#aiMsg", "حُفظ — يطبّق على الرسائل الجاية مباشرة", "ok"); return refreshPlatform(); })
+    .then(function () { loadAdminLog(); })
+    .catch(function (e) { note("#aiMsg", e.message, "err"); })
+    .then(function () { b.disabled = false; });
+}
+
+// أسماء الحقول في السجل بالعربي
+var FIELD_AR = {
+  name: "الاسم", code: "الرمز", license_no: "رقم الرخصة", wa_provider: "مزوّد واتساب", wa_instance: "معرّف واتساب",
+  wa_token: "توكن واتساب", wa_number: "رقم واتساب", telegram_chat_id: "تيليجرام", msg_quota: "حد الرسائل",
+  active: "التفعيل", voice: "الصوتيات", from_signup: "من طلب انضمام", phone: "الجوال", role: "الدور",
+  title: "اسم العقار", price: "السعر", district: "الحي", rooms: "الغرف", state: "الحالة", deal_type: "نوع الطلب",
+  property_type: "نوع العقار", ad_license_no: "ترخيص الإعلان", ad_license_expiry: "انتهاء الترخيص",
+  openai_key: "مفتاح OpenAI", telegram_token: "توكن البوت", meta_app_secret: "مفتاح ميتا", meta_verify_token: "رمز تحقق ميتا",
+  platform_wa_phone_id: "رقم المنصة", platform_wa_token: "توكن رقم المنصة", otp_template: "قالب الدخول",
+  price_ai_in: "الأسعار", price_ai_cached: "الأسعار", price_ai_out: "الأسعار", price_otp: "الأسعار", my_phone: "رقمي",
+};
+
+function loadAdminLog() {
+  if (!S.isSuper) return Promise.resolve();
+  return call({ action: "admin_log", limit: 40 }).then(function (r) {
+    var log = r.log || [], host = $("#adminLog");
+    if (!log.length) { host.innerHTML = '<p class="hint">ما فيه تعديلات مسجّلة بعد.</p>'; return; }
+    host.innerHTML = '<ul class="alog">' + log.map(function (x) {
+      var d = x.detail || {};
+      var seen = {}, fields = (d.fields || []).map(function (k) { return FIELD_AR[k] || null; })
+        .filter(function (v) { if (!v || seen[v]) return false; seen[v] = 1; return true; }).slice(0, 4);
+      return "<li><b>" + esc(d.label || d.action) + "</b>" +
+        (d.what ? " · " + esc(d.what) : "") + (d.office ? " · " + esc(d.office) : "") +
+        (fields.length ? '<span class="f">' + esc(fields.join("، ")) + "</span>" : "") +
+        '<span class="w">' + esc(d.by || "") + " · " + esc(ago(x.created_at)) + "</span></li>";
+    }).join("") + "</ul>";
+  }).catch(function (e) { $("#adminLog").innerHTML = '<p class="hint">' + esc(e.message) + "</p>"; });
+}
+
+// رابط موقّع لملف خاص (صورة رخصة): يُفتح في نافذة جديدة تُحجز قبل الطلب عشان ما يمنعها المتصفح
+function openSigned(body, btn) {
+  var w = null;
+  try { w = window.open("", "_blank"); } catch (e) { w = null; }
+  if (btn) btn.disabled = true;
+  return call(body).then(function (r) {
+    if (w) w.location.href = r.url; else location.href = r.url;
+  }).catch(function (e) {
+    if (w) try { w.close(); } catch (x) {}
+    alert(e.message);
+  }).then(function () { if (btn) btn.disabled = false; });
 }
 
 /* ---------- الاستهلاك والتكلفة — مشغّل المنصة ---------- */
@@ -1254,6 +1434,7 @@ function loadUsage(force) {
   call({ action: "platform_usage", month: key }).then(function (r) {
     S.usage[key] = r;
     if (usageKeySel() === key) renderUsage(r);
+    if (S.mode === "platform" && key === riyadhMonth(0)) renderHome();
   }).catch(function (e) { host.innerHTML = '<p class="hint">' + esc(e.message) + "</p>"; });
 }
 
@@ -1318,12 +1499,14 @@ function switchOffice(o, btn) {
     S.status = res[2];
     S.me.office = { id: o.id, name: o.name, code: o.code, license_no: o.license_no,
                     msg_quota: o.msg_quota, wa_number: o.wa_number, wa_provider: o.wa_provider, fal: o.fal };
-    paintHeader(); renderToday(); renderLeads(); renderStock(); renderSettings(); renderOffices();
+    setMode("office");
+    renderToday(); renderLeads(); renderStock(); renderSettings();
     show("s-today");
   }).catch(function (e) {
+    S.curOffice = null;
     alert(e.message);
   }).then(function () {
-    btn.disabled = false; btn.textContent = "افتح";
+    btn.disabled = false; btn.textContent = "ادخل";
   });
 }
 
@@ -1358,13 +1541,16 @@ function openOffice(o, prefill) {
     "</div>" +
     '<div class="field"><label for="oTg">معرّف محادثة تيليجرام</label>' +
       '<input id="oTg" class="input ltr" value="' + esc(v.telegram_chat_id || "") + '" placeholder="-100..."></div>' +
+    '<label class="toggle" for="oVoice"><input id="oVoice" type="checkbox"' + (v.voice ? " checked" : "") + '>' +
+      "<span>تحويل الرسائل الصوتية لنص — المساعد يفهم صوتيات العملاء (تكلفة بسيطة لكل دقيقة).</span></label>" +
     '<label class="toggle" for="oActive"><input id="oActive" type="checkbox"' + (v.active === false ? "" : " checked") + '>' +
       "<span>المكتب فعّال — البوت يرد على رقمه، وموظفوه يقدرون يدخلون. أزل العلامة لإيقافه.</span></label>" +
-    '<button class="btn" id="oSave">' + (o ? "حفظ" : "أضف المكتب") + "</button>" +
+    '<div class="btnrow"><button class="btn" id="oSave">' + (o ? "حفظ" : "أضف المكتب") + "</button>" +
+      (o ? '<button class="btn ghost" id="oTest" type="button">رسالة اختبار لجوالي</button>' : "") + "</div>" +
     '<div id="oMsg"></div>' +
     (o ? "" : '<p class="hint">بعد الإضافة: افتح المكتب من «تعديل» وتحقق من رخصة فال — المساعد ما يرد على عملائه قبلها.</p>') +
     (o ? '<div class="block" style="margin-top:22px" id="falBlock"><h3>رخصة فال</h3>' +
-         '<div id="falBody"><div class="skel skel-row"></div></div></div>' : "") +
+         '<div id="falFiles"></div><div id="falBody"><div class="skel skel-row"></div></div></div>' : "") +
     (o ? '<div class="block" style="margin-top:22px" id="staffBlock"><h3>موظفو المكتب</h3>' +
          '<div class="rows" id="staffList"><div class="skel skel-row"></div></div>' +
          '<div id="staffForm" class="staff-form"></div></div>' : ""));
@@ -1407,6 +1593,7 @@ function openOffice(o, prefill) {
         wa_number: normPhone($("#oNum").value), telegram_chat_id: $("#oTg").value,
         msg_quota: $("#oQuota").value,
         active: $("#oActive").checked,
+        voice: $("#oVoice").checked,
         from_signup: v.from_signup || undefined,
       },
     }).then(function (r) {
@@ -1419,11 +1606,46 @@ function openOffice(o, prefill) {
           .then(function () { loadSignups(); });
       }
     }).then(function () {
-      renderOffices(); closeSheet();
+      renderOffices(); renderHome(); loadAdminLog(); closeSheet();
     }).catch(function (e) { note("#oMsg", e.message, "err"); b.disabled = false; });
   };
 
-  if (o) { falPanel(o); staffPanel(o); }
+  if ($("#oTest")) $("#oTest").onclick = function () {
+    var b = this; b.disabled = true; note("#oMsg", "جاري الإرسال…", "ok");
+    call({ action: "test_whatsapp", office_id: o.id })
+      .then(function (r) { note("#oMsg", r.ok ? "وصلت رسالة الاختبار لجوالك من رقم المكتب" : "ما وصلت — راجع بيانات ربط الواتساب", r.ok ? "ok" : "err"); })
+      .catch(function (e) { note("#oMsg", e.message, "err"); })
+      .then(function () { b.disabled = false; });
+  };
+
+  if (o) { falFiles(o); falPanel(o); staffPanel(o); }
+}
+
+// ملفات الرخصة اللي رفعها المكتب: صورة التسجيل، وطلب التعديل (ينتظر المدير)
+function falFiles(o) {
+  var h = $("#falFiles");
+  if (!h) return;
+  var parts = [];
+  if (o.fal_request) {
+    parts.push('<div class="msg warn falreq">' + svg(ICON.inbox) + "<span><b>طلب تعديل من المكتب</b> " +
+      esc(ago(o.fal_request.at)) + (o.fal_request.by ? " · " + esc(o.fal_request.by) : "") +
+      (o.fal_request.note ? "<br>" + esc(o.fal_request.note) : "") +
+      '<br>افتح الرخصة الجديدة، غيّر الرقم فوق إذا تغيّر، وتحقق منها من الهيئة، ثم أغلق الطلب.</span></div>' +
+      '<div class="btnrow"><button class="btn ghost sm" type="button" id="frSee">الرخصة الجديدة</button>' +
+      '<button class="btn ghost sm" type="button" id="frClose">تم — أغلق الطلب</button></div>');
+  }
+  if (o.has_signup_proof) {
+    parts.push('<div class="btnrow"><button class="btn ghost sm" type="button" id="fsSee">صورة الرخصة من التسجيل</button></div>');
+  }
+  h.innerHTML = parts.join("");
+  if ($("#frSee")) $("#frSee").onclick = function () { openSigned({ action: "signup_proof", office_id: o.id, kind: "request" }, this); };
+  if ($("#fsSee")) $("#fsSee").onclick = function () { openSigned({ action: "signup_proof", office_id: o.id }, this); };
+  if ($("#frClose")) $("#frClose").onclick = function () {
+    var b = this; b.disabled = true;
+    call({ action: "fal_request_close", office_id: o.id }).then(function (r) {
+      S.offices = r.offices || S.offices; o.fal_request = null; falFiles(o); renderOffices(); renderHome(); loadAdminLog();
+    }).catch(function (e) { alert(e.message); b.disabled = false; });
+  };
 }
 
 /* ---------- رخصة فال: تحقق يدوي من استعلام الهيئة — مشغّل المنصة ---------- */
@@ -1793,8 +2015,10 @@ function loadSignups() {
   return call({ action: "signup_list" }).then(function (r) {
     S.signups = r.requests || [];
     S.signupsNew = S.signups.filter(function (x) { return x.status === "new"; }).length;
-    $("#navOfficesDot").hidden = S.signupsNew === 0;
+    $("#navSignDot").hidden = S.signupsNew === 0;
+    $("#signupsCount").textContent = S.signups.length ? S.signups.length + " طلب" : "";
     renderSignups();
+    if (S.mode === "platform") renderHome();
   }).catch(function (e) {
     $("#signupList").innerHTML = '<p class="hint">' + esc(e.message) + "</p>";
   });
@@ -1822,6 +2046,7 @@ function renderSignups() {
         '<span class="ltr num">' + esc(local) + "</span>" +
         (x.city ? "<span>" + esc(x.city) + "</span>" : "") +
         "<span>فال: " + (x.fal_license ? '<span class="num">' + esc(x.fal_license) + "</span>" : "لم يُذكر") + "</span>" +
+        (x.has_proof ? '<span class="tag ok">صورة الرخصة مرفقة</span>' : '<span class="tag warn">بلا صورة رخصة</span>') +
         (x.agents ? "<span>الوسطاء: " + esc(x.agents) + "</span>" : "") +
       "</div>" +
       (x.note ? '<div class="note">' + esc(x.note) + "</div>" : ""));
@@ -1832,6 +2057,7 @@ function renderSignups() {
     var mk = function (label, cls, fn) {
       var b = el("button", "btn sm " + cls, label); b.type = "button"; b.onclick = fn; row.appendChild(b); return b;
     };
+    if (x.has_proof) mk("صورة الرخصة", "ghost", function () { openSigned({ action: "signup_proof", signup_id: x.id }, this); });
     if (x.status !== "converted") {
       mk("أنشئ المكتب", "", function () {
         openOffice(null, {
@@ -2034,13 +2260,13 @@ function renderSettings() {
   }).join("");
   // ماذا يعني وضع الرخصة للمكتب، وما المطلوب منه
   var falNote = {
-    pending: "المساعد الآلي ما يرد على عملائك لين تتحقق مقصد من رخصة فال. أرسل صورة شهادة فال لمقصد، " +
+    pending: "المساعد الآلي ما يرد على عملائك لين تتحقق مقصد من رخصة فال. ارفع صورة شهادة فال من الزر تحت، " +
       "وتقدر أنت وموظفينك تجرّبون المساعد من أرقامكم المسجّلة قبل التفعيل.",
-    rejected: "ما اعتُمدت رخصة فال" + (fal.note ? ": " + fal.note : "") + ". المساعد متوقف لين تصحّح السبب وترسل شهادة سارية لمقصد.",
+    rejected: "ما اعتُمدت رخصة فال" + (fal.note ? ": " + fal.note : "") + ". المساعد متوقف لين تصحّح السبب وترفع شهادة سارية من الزر تحت.",
     expired: "رخصة فال منتهية: المساعد يستقبل طلبات العملاء ويحوّلها لكم، لكن ما يعرض أي عقار. " +
-      "جدّدها من منصة الهيئة وأرسل الشهادة الجديدة لمقصد.",
+      "جدّدها من منصة الهيئة وارفع الشهادة الجديدة من الزر تحت.",
   }[fal.state] || (falSoon(fal) ? "رخصة فال تنتهي " + inDaysAr(fal.days_left) +
-      ". جدّدها وأرسل الشهادة الجديدة لمقصد — إذا انتهت يوقف المساعد عرض العقارات تلقائياً." : "");
+      ". جدّدها وارفع الشهادة الجديدة من الزر تحت — إذا انتهت يوقف المساعد عرض العقارات تلقائياً." : "");
   var fh = $("#falNote");
   fh.hidden = !falNote;
   fh.textContent = falNote;
@@ -2050,24 +2276,7 @@ function renderSettings() {
   $("#sysBlock").hidden = !S.isSuper;
   renderNotify();
 
-  if (S.isSuper) {
-    var mark = function (id, ok) {
-      var n = $(id); n.value = "";
-      n.placeholder = ok ? "••••••  محفوظ ✓  (اتركه فارغاً لعدم التغيير)" : "غير مضبوط — الصق القيمة";
-    };
-    mark("#kOpenai", s.openai); mark("#kWaTok", s.whatsapp); mark("#kTg", s.telegram);
-    mark("#kMetaSecret", s.meta);
-    $("#kMetaVerify").value = "";
-    $("#kMetaVerify").placeholder = s.meta ? "محفوظ ✓ (اتركه فارغاً لعدم التغيير)" : "اختر أي كلمة سرية";
-    $("#kHook").value = s.meta_webhook || "";
-    mark("#kPlatTok", s.otp_platform);
-    $("#kPlatId").value = s.platform_phone_id || "";
-    $("#kOtpTpl").value = s.otp_template || "";
-    $("#kInst").value = s.wa_instance || "";
-    $("#kWaNum").value = s.wa_number || "";
-    $("#kQuota").value = s.msg_quota || "";
-    $("#kTgChat").value = s.telegram_chat_id || "";
-  }
+  renderFalRequest();
 }
 
 function refreshStatus() {
@@ -2080,6 +2289,8 @@ function refreshStatus() {
    اللوح المنزلق
    ========================================================================== */
 function openSheet(title, html) {
+  homeNotify();
+  $("#sheetClose").onclick = closeSheet; $("#scrim").onclick = closeSheet;
   $("#sheetTitle").textContent = title;
   $("#sheetBody").innerHTML = html;
   $("#sheetBody").scrollTop = 0;
@@ -2087,7 +2298,13 @@ function openSheet(title, html) {
   $("#sheet").classList.add("on");
   document.body.style.overflow = "hidden";
 }
+// بطاقة التنبيهات قد تنتقل لخطوات أول دخول: ترجع لمكانها في الإعدادات
+function homeNotify() {
+  var c = $("#notifyCard"), home = $("#notifyBlock");
+  if (c && home && !home.contains(c)) home.appendChild(c);
+}
 function closeSheet() {
+  homeNotify();
   $("#scrim").classList.remove("on");
   $("#sheet").classList.remove("on");
   document.body.style.overflow = "";
@@ -2096,8 +2313,9 @@ function closeSheet() {
 /* ==========================================================================
    التنقل
    ========================================================================== */
+var PLATFORM_SCREENS = ["s-home", "s-offices", "s-signups", "s-platform"];
 function show(id) {
-  if (id === "s-offices" && !S.isSuper) return;
+  if (PLATFORM_SCREENS.indexOf(id) > -1 && !S.isSuper) return;
   var secs = document.querySelectorAll(".screen");
   for (var i = 0; i < secs.length; i++) secs[i].classList.toggle("on", secs[i].id === id);
   var tabs = document.querySelectorAll(".nav button");
@@ -2149,13 +2367,18 @@ function bind() {
 
   $("#btnRefresh").onclick = function () {
     var b = this; b.disabled = true;
+    if (S.isSuper && S.mode === "platform") {
+      S.usage = {};
+      Promise.all([refreshPlatform(), loadSignups(), loadAdminLog()]).then(function () { loadUsage(true); loadBackups(); })
+        .catch(function () {}).then(function () { b.disabled = false; });
+      return;
+    }
     S.pre = null; S.month = {}; S.usage = {};
     Promise.all([
       call({ action: "leads" }), call({ action: "properties" }), call({ action: "settings_status" }),
     ]).then(function (r) {
       S.leads = r[0].leads || []; S.props = r[1].properties || []; S.status = r[2];
       renderToday(); renderLeads(); renderStock(); renderSettings();
-      if (S.isSuper) { loadBackups(); loadUsage(); }
     }).catch(function () {}).then(function () { b.disabled = false; });
   };
 
@@ -2198,7 +2421,7 @@ function bind() {
     })(sc[d]);
   }
 
-  $("#btnNewProp").onclick = function () { openProp(null); };
+  $("#btnNewProp").onclick = function () { openPropWizard(); };
   $("#btnNewOffice").onclick = function () { openOffice(null); };
   $("#sheetClose").onclick = closeSheet;
   $("#scrim").onclick = closeSheet;
@@ -2221,24 +2444,11 @@ function bind() {
         openai_key: val("#kOpenai"), telegram_token: val("#kTg"),
         meta_app_secret: val("#kMetaSecret"), meta_verify_token: val("#kMetaVerify"),
         platform_wa_phone_id: val("#kPlatId"), platform_wa_token: val("#kPlatTok"), otp_template: val("#kOtpTpl"),
-        telegram_chat_id: val("#kTgChat"), wa_instance: val("#kInst"),
-        wa_token: val("#kWaTok"), wa_number: val("#kWaNum"), msg_quota: val("#kQuota"),
       },
     }).then(function () {
-      note("#keysMsg", "حُفظت الإعدادات", "ok");
-      return refreshStatus();
+      note("#keysMsg", "حُفظت المفاتيح", "ok");
+      return refreshPlatform();
     }).catch(function (e) { note("#keysMsg", e.message, "err"); })
-      .then(function () { b.disabled = false; });
-  };
-
-  $("#btnTestWa").onclick = function () {
-    var b = this; b.disabled = true; note("#keysMsg", "جاري الإرسال…", "ok");
-    call({ action: "test_whatsapp" })
-      .then(function (r) {
-        note("#keysMsg", r.ok ? "وصلت رسالة الاختبار إلى " + r.to
-          : "فشل الإرسال — راجع توكن UltraMsg", r.ok ? "ok" : "err");
-      })
-      .catch(function (e) { note("#keysMsg", e.message, "err"); })
       .then(function () { b.disabled = false; });
   };
 
@@ -2256,8 +2466,450 @@ function bind() {
   $("#btnExpJson").onclick = function () { exportData("json", this); };
   $("#btnDeleteAcct").onclick = function () { requestDeletion(); };
 
-  $("#btnLogout").onclick = function () {
+  $("#btnLogout").onclick = $("#btnLogout2").onclick = function () {
     call({ action: "logout" }).catch(function () {}).then(logout);
+  };
+  $("#btnExitOffice").onclick = exitOffice;
+  $("#btnSaveAi").onclick = function () { saveAi(this); };
+  $("#officeSearch").oninput = function () { S.officeQuery = this.value; renderOffices(); };
+  var oc = document.querySelectorAll("#officeChips .chip");
+  for (var oi = 0; oi < oc.length; oi++) {
+    (function (c) {
+      c.onclick = function () { S.officeFilter = c.dataset.f; syncChips("#officeChips", c.dataset.f); renderOffices(); };
+    })(oc[oi]);
+  }
+  $("#btnSignup").onclick = function () { openSignup(); };
+}
+
+/* ==========================================================================
+   خطوات منبثقة: أدوات مشتركة (أول دخول · إضافة عقار · التسجيل)
+   ========================================================================== */
+function stepHead(i, n, title, sub) {
+  var dots = "";
+  for (var k = 0; k < n; k++) dots += '<i class="' + (k < i ? "done" : k === i ? "on" : "") + '"></i>';
+  return '<div class="wz-head"><div class="wz-bar" aria-hidden="true">' + dots + "</div>" +
+    '<span class="wz-n">خطوة ' + (i + 1).toLocaleString("ar-SA") + " من " + n.toLocaleString("ar-SA") + "</span>" +
+    "<h4>" + esc(title) + "</h4>" + (sub ? '<p class="hint tight">' + esc(sub) + "</p>" : "") + "</div>";
+}
+function choiceGrid(name, opts, val) {
+  return '<div class="wz-choices" role="radiogroup">' + opts.map(function (o) {
+    return '<button type="button" class="wz-choice" role="radio" data-name="' + name + '" data-v="' + esc(o[0]) + '" aria-checked="' +
+      (o[0] === val ? "true" : "false") + '">' + (o[2] ? svg(o[2]) : "") + "<span>" + esc(o[1]) + "</span></button>";
+  }).join("") + "</div>";
+}
+function wireChoices(root, onPick) {
+  var bs = root.querySelectorAll(".wz-choice");
+  for (var i = 0; i < bs.length; i++) {
+    (function (b) {
+      b.onclick = function () {
+        var sib = root.querySelectorAll('.wz-choice[data-name="' + b.dataset.name + '"]');
+        for (var k = 0; k < sib.length; k++) sib[k].setAttribute("aria-checked", sib[k] === b ? "true" : "false");
+        onPick(b.dataset.name, b.dataset.v);
+      };
+    })(bs[i]);
+  }
+}
+function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } }
+function lsSet(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+var PICON = {
+  apt: '<rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1"/>',
+  villa: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>',
+  floor: '<path d="M3 20h18M5 20V9h14v11"/><path d="M5 14h14"/>',
+  land: '<path d="M3 17 9 7l4 6 3-4 5 8z"/>',
+  shop: '<path d="M4 9h16l-1-5H5z"/><path d="M5 9v11h14V9"/><path d="M10 20v-6h4v6"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3M16 6l3 3"/>',
+  tag: '<path d="M20.6 13.4 12 22l-9-9V4h9l8.6 8.6a1 1 0 0 1 0 .8Z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
+};
+
+/* ---------- إضافة عقار بخطوات ---------- */
+var PROP_DRAFT = "maqsad_prop_draft";
+function openPropWizard(done) {
+  var d = lsGet(PROP_DRAFT) || { deal_type: "", property_type: "", district: "", rooms: "", title: "", price: "",
+    ad_license_no: "", ad_license_expiry: "", step: 0 };
+  var N = 5;
+  openSheet("عقار جديد", '<div id="wz"></div>');
+  var save = function () { lsSet(PROP_DRAFT, d); };
+  var host = function () { return $("#wz"); };
+  var isLand = function () { return d.property_type === "أرض" || d.property_type === "محل"; };
+  var autoTitle = function () { return [d.property_type, d.district].filter(Boolean).join(" "); };
+
+  function nav(backOk, nextLabel, nextOk) {
+    return '<div class="wz-nav">' +
+      '<button class="btn" type="button" id="wzNext"' + (nextOk ? "" : " disabled") + ">" + esc(nextLabel || "التالي") + "</button>" +
+      (backOk ? '<button class="btn ghost" type="button" id="wzBack">رجوع</button>' : "") + "</div>" + '<div id="wzMsg"></div>';
+  }
+  function go(i) { d.step = i; save(); paint(); $("#sheetBody").scrollTop = 0; }
+
+  function paint() {
+    var h = host();
+    if (!h) return;
+    var i = d.step || 0;
+    if (i === 0) {
+      h.innerHTML = stepHead(0, N, "وش نوع العقار؟", "اختر نوع العرض ونوع العقار.") +
+        '<span class="flabel">العرض</span>' +
+        choiceGrid("deal", [["إيجار", "للإيجار", PICON.key], ["شراء", "للبيع", PICON.tag]], d.deal_type) +
+        '<span class="flabel">العقار</span>' +
+        choiceGrid("type", [["شقة", "شقة", PICON.apt], ["فيلا", "فيلا", PICON.villa], ["دور", "دور", PICON.floor],
+          ["أرض", "أرض", PICON.land], ["محل", "محل", PICON.shop]], d.property_type) +
+        nav(false, "التالي", d.deal_type && d.property_type);
+      wireChoices(h, function (n, v) {
+        if (n === "deal") d.deal_type = v; else d.property_type = v;
+        save(); $("#wzNext").disabled = !(d.deal_type && d.property_type);
+      });
+    } else if (i === 1) {
+      h.innerHTML = stepHead(1, N, "وين موقعه؟", "الحي اللي يبحث فيه العميل — اكتبه مثل ما يكتبه الناس.") +
+        '<div class="field"><label for="wzDistrict">الحي</label>' +
+          '<input id="wzDistrict" class="input" autocomplete="off" placeholder="النرجس" value="' + esc(d.district) + '"></div>' +
+        (isLand() ? "" : '<div class="field"><label for="wzRooms">عدد الغرف <span class="opt">(اختياري)</span></label>' +
+          '<input id="wzRooms" class="input" type="number" inputmode="numeric" min="0" max="30" value="' + esc(d.rooms) + '"></div>') +
+        '<div class="field"><label for="wzTitle">اسم مختصر تعرفه أنت <span class="opt">(اختياري)</span></label>' +
+          '<input id="wzTitle" class="input" placeholder="' + esc(autoTitle() || "شقة النرجس A12") + '" value="' + esc(d.title) + '">' +
+          '<p class="hint">ما يشوفه العميل — بس عشان تميّز العقار في قائمتك.</p></div>' +
+        nav(true, "التالي", d.district.trim().length > 1);
+      $("#wzDistrict").oninput = function () { d.district = this.value; save(); $("#wzNext").disabled = d.district.trim().length < 2;
+        $("#wzTitle").placeholder = autoTitle() || "شقة النرجس A12"; };
+      if ($("#wzRooms")) $("#wzRooms").oninput = function () { d.rooms = this.value; save(); };
+      $("#wzTitle").oninput = function () { d.title = this.value; save(); };
+      $("#wzDistrict").focus();
+    } else if (i === 2) {
+      var rent = d.deal_type === "إيجار";
+      h.innerHTML = stepHead(2, N, "كم السعر؟", rent ? "الإيجار السنوي بالريال." : "سعر البيع بالريال.") +
+        '<div class="field"><label for="wzPrice">' + (rent ? "الإيجار السنوي" : "سعر البيع") + '</label>' +
+          '<input id="wzPrice" class="input ltr" inputmode="numeric" placeholder="' + (rent ? "45000" : "1200000") + '" value="' + esc(d.price) + '">' +
+          '<p class="hint" id="wzPriceHint"></p></div>' +
+        nav(true, "التالي", Number(digits(d.price)) > 0);
+      var hint = function () {
+        var n = Number(digits(latinDigits(d.price)));
+        $("#wzPriceHint").textContent = n > 0 ? money(n) + " ريال" + (rent ? " سنوياً" : "") : "اكتب الرقم بدون فواصل";
+        $("#wzNext").disabled = !(n > 0);
+      };
+      $("#wzPrice").oninput = function () { d.price = this.value; save(); hint(); };
+      hint(); $("#wzPrice").focus();
+    } else if (i === 3) {
+      h.innerHTML = stepHead(3, N, "ترخيص الإعلان", "رقم ترخيص الإعلان من منصة الهيئة العامة للعقار وتاريخ انتهائه.") +
+        '<div class="field"><label for="wzLic">رقم ترخيص الإعلان</label>' +
+          '<input id="wzLic" class="input ltr" inputmode="numeric" placeholder="7200034512" value="' + esc(d.ad_license_no) + '"></div>' +
+        '<div class="field"><label for="wzExp">ينتهي في</label>' +
+          '<input id="wzExp" class="input ltr" type="date" min="' + riyadhDay() + '" value="' + esc(d.ad_license_expiry) + '"></div>' +
+        '<p class="hint warn" id="wzLicHint"></p>' +
+        nav(true, "التالي", true);
+      var lh = function () {
+        var ok = digits(latinDigits(d.ad_license_no)).length >= 4 && d.ad_license_expiry;
+        $("#wzLicHint").textContent = ok ? "" : "تقدر تكمل بدونه، بس المساعد ما يعرض العقار على أي عميل لين تضيف ترخيص ساري — حماية لك نظامياً.";
+        $("#wzNext").textContent = ok ? "التالي" : "أكمل بدون ترخيص الحين";
+      };
+      $("#wzLic").oninput = function () { d.ad_license_no = this.value; save(); lh(); };
+      $("#wzExp").oninput = function () { d.ad_license_expiry = this.value; save(); lh(); };
+      lh();
+    } else {
+      var row = function (k, v, step) {
+        return "<div><dt>" + esc(k) + "</dt><dd>" + esc(v || "—") +
+          ' <button type="button" class="linkbtn" data-go="' + step + '">تعديل</button></dd></div>';
+      };
+      var n = Number(digits(latinDigits(d.price)));
+      h.innerHTML = stepHead(4, N, "راجع قبل الحفظ") +
+        '<div class="card"><dl class="dl">' +
+          row("العرض", d.deal_type === "إيجار" ? "للإيجار" : "للبيع", 0) + row("العقار", d.property_type, 0) +
+          row("الحي", d.district, 1) + (isLand() ? "" : row("الغرف", d.rooms, 1)) +
+          row("الاسم", d.title || autoTitle(), 1) +
+          row("السعر", n ? money(n) + " ريال" + (d.deal_type === "إيجار" ? " سنوياً" : "") : "", 2) +
+          row("ترخيص الإعلان", d.ad_license_no ? d.ad_license_no + (d.ad_license_expiry ? " — ينتهي " + gDate(d.ad_license_expiry) : "") : "بدون — ما يُعرض", 3) +
+        "</dl></div>" + nav(true, "احفظ العقار", true);
+      var gs = h.querySelectorAll("[data-go]");
+      for (var g = 0; g < gs.length; g++) (function (b) { b.onclick = function () { go(Number(b.dataset.go)); }; })(gs[g]);
+    }
+    if ($("#wzBack")) $("#wzBack").onclick = function () { go(i - 1); };
+    $("#wzNext").onclick = function () { if (i < N - 1) go(i + 1); else submit(this); };
+  }
+
+  function submit(b) {
+    b.disabled = true; note("#wzMsg", "", "");
+    call({ action: "property_save", property: {
+      title: (d.title || autoTitle()).trim(), deal_type: d.deal_type, property_type: d.property_type,
+      district: d.district.trim(), rooms: isLand() ? "" : d.rooms, price: digits(latinDigits(d.price)), state: "available",
+      ad_license_no: digits(latinDigits(d.ad_license_no)), ad_license_expiry: d.ad_license_expiry,
+    } }).then(function () { return call({ action: "properties" }); }).then(function (r) {
+      lsSet(PROP_DRAFT, null);
+      S.props = r.properties || [];
+      renderStock(); renderToday();
+      if (done) done(); else closeSheet();
+    }).catch(function (e) { note("#wzMsg", e.message, "err"); b.disabled = false; });
+  }
+  paint();
+}
+function latinDigits(v) {
+  return String(v == null ? "" : v).replace(/[٠-٩]/g, function (x) { return String("٠١٢٣٤٥٦٧٨٩".indexOf(x)); })
+    .replace(/[۰-۹]/g, function (x) { return String("۰۱۲۳۴۵۶۷۸۹".indexOf(x)); });
+}
+
+/* ---------- أول دخول لصاحب المكتب ---------- */
+var OB = [
+  { k: "office", t: "بيانات مكتبك" },
+  { k: "notify", t: "وين يوصلك العميل الجاهز" },
+  { k: "property", t: "أضف أول عقار" },
+  { k: "team", t: "أضف وسطاء مكتبك" },
+];
+function isOwnerMe() { return !!(S.me && S.me.staff && S.me.staff.role === "owner"); }
+function obDone(k) { return !!((S.me.office.onboarding || {})[k]); }
+function obLeft() { return OB.filter(function (x) { return !obDone(x.k); }).length; }
+
+function maybeOnboard() {
+  if (!isOwnerMe() || S.me.office.onboarded) return;
+  var later = null;
+  try { later = sessionStorage.getItem("maqsad_ob_later"); } catch (e) {}
+  if (!later) openOnboard(-1);
+}
+function onboardItems() {
+  if (!isOwnerMe() || S.me.office.onboarded) return [];
+  var left = obLeft();
+  return [{ kind: "", icon: ICON.check, title: "كمّل تجهيز مكتبك",
+    body: left ? "باقي " + left + " من " + OB.length + " خطوات — دقيقتين" : "خلّصت الخطوات، اضغط «إنهاء»",
+    why: OB.map(function (x) { return (obDone(x.k) ? "✓ " : "") + x.t; }).join(" · "),
+    go: function () { openOnboard(-1); } }];
+}
+function obMark(k, finish) {
+  var body = { action: "onboarding_save", done: k ? [k] : [] };
+  if (finish) body.finish = true;
+  return call(body).then(function (r) {
+    S.me.office.onboarding = r.onboarding; S.me.office.onboarded = r.onboarded;
+    renderToday();
+  });
+}
+
+function openOnboard(start) {
+  openSheet("تجهيز مكتبك", '<div id="ob"></div>');
+  var leave = function () {
+    try { sessionStorage.setItem("maqsad_ob_later", "1"); } catch (e) {}
+    closeSheet(); renderToday();
+  };
+  $("#sheetClose").onclick = leave; $("#scrim").onclick = leave;
+
+  function nextUndone(from) {
+    for (var k = from; k < OB.length; k++) if (!obDone(OB[k].k)) return k;
+    return OB.length;
+  }
+  function paint(i) {
+    homeNotify();
+    var h = $("#ob"), o = S.me.office, name = firstName(S.me.staff.name);
+    $("#sheetBody").scrollTop = 0;
+    if (i < 0) {
+      h.innerHTML = '<div class="ob-hi"><h4>هلا ' + esc(name) + '، خلنا نجهّز مكتبك</h4>' +
+        '<p>أربع خطوات قصيرة، وبعدها المساعد يستقبل عملاءك ويوصلك الجاهز منهم.</p>' +
+        '<ol class="ob-list">' + OB.map(function (x) {
+          return '<li class="' + (obDone(x.k) ? "done" : "") + '">' + (obDone(x.k) ? svg(ICON.check) : "") + "<span>" + esc(x.t) + "</span></li>";
+        }).join("") + "</ol></div>" +
+        '<div class="wz-nav"><button class="btn" type="button" id="obGo">' + (obLeft() < OB.length ? "كمّل" : "ابدأ") + "</button>" +
+        '<button class="btn ghost" type="button" id="obLater">لاحقاً</button></div>';
+      $("#obGo").onclick = function () { paint(nextUndone(0)); };
+      $("#obLater").onclick = leave;
+      return;
+    }
+    if (i >= OB.length) {
+      h.innerHTML = '<div class="ob-hi"><h4>مكتبك جاهز</h4><p>' +
+        (falOf(o).state === "ok" ? "المساعد يشتغل الحين ويستقبل عملاءك."
+          : "باقي خطوة وحدة علينا: نتحقق من رخصة فال، وبعدها يبدأ المساعد يرد على عملاءك. نبلغك أول ما نخلّص.") +
+        "</p></div>" + '<div class="wz-nav"><button class="btn" type="button" id="obEnd">تمام</button></div><div id="obMsg"></div>';
+      $("#obEnd").onclick = function () {
+        var b = this; b.disabled = true;
+        obMark(null, true).then(leave).catch(function (e) { note("#obMsg", e.message, "err"); b.disabled = false; });
+      };
+      return;
+    }
+    var step = OB[i], head = stepHead(i, OB.length, step.t);
+    var navH = function (label) {
+      return '<div class="wz-nav"><button class="btn" type="button" id="obNext">' + esc(label || "التالي") + "</button>" +
+        '<button class="btn ghost" type="button" id="obSkip">تخطّ</button></div><div id="obMsg"></div>';
+    };
+    var next = function (b) {
+      if (b) b.disabled = true;
+      obMark(step.k).then(function () { paint(i + 1); })
+        .catch(function (e) { note("#obMsg", e.message, "err"); if (b) b.disabled = false; });
+    };
+    if (step.k === "office") {
+      var f = falOf(o);
+      h.innerHTML = head +
+        '<div class="card"><dl class="dl">' +
+          "<div><dt>اسم المكتب</dt><dd>" + esc(o.name) + "</dd></div>" +
+          '<div><dt>رخصة فال</dt><dd class="num">' + esc(o.license_no || "—") + "</dd></div>" +
+          "<div><dt>حالتها</dt><dd>" + falTag(f) + "</dd></div>" +
+          '<div><dt>رقم واتساب المكتب</dt><dd class="num">' + esc(o.wa_number ? fmtPhone(o.wa_number) : "نربطه لك") + "</dd></div>" +
+        "</dl></div>" +
+        '<p class="hint">هذي البيانات تضبطها مقصد بعد التحقق من الرخصة. فيها خطأ أو تجددت رخصتك؟ ' +
+        '<button type="button" class="linkbtn" id="obFix">اطلب تعديل</button></p>' + navH("صحيحة، التالي");
+      $("#obFix").onclick = function () { openFalRequest(function () { openOnboard(0); }); };
+    } else if (step.k === "notify") {
+      h.innerHTML = head + '<p class="hint tight">أول ما يكتمل طلب عميل نرسله لك فوراً. اختر طريقة وحدة أو الاثنين.</p>' +
+        '<div id="obNotify"></div>' + navH();
+      var card = $("#notifyCard");
+      if (card) { $("#obNotify").appendChild(card); renderNotify(); }
+    } else if (step.k === "property") {
+      h.innerHTML = head + '<p class="hint tight">المساعد يعرض على العملاء العقارات المتاحة عندك اللي عندها ترخيص إعلان ساري.</p>' +
+        (S.props.length ? '<p class="msg ok">' + svg(ICON.check) + "<span>عندك " + S.props.length + " عقار مضاف.</span></p>" : "") +
+        '<div class="wz-nav"><button class="btn" type="button" id="obProp">أضف عقار</button>' +
+        (S.props.length ? '<button class="btn ghost" type="button" id="obNext">التالي</button>' : "") +
+        '<button class="btn ghost" type="button" id="obSkip">تخطّ</button></div><div id="obMsg"></div>';
+      $("#obProp").onclick = function () {
+        openPropWizard(function () {
+          obMark("property").then(function () { openOnboard(nextUndone(i + 1)); })
+            .catch(function () { openOnboard(i + 1); });
+        });
+      };
+    } else if (step.k === "team") {
+      h.innerHTML = head + '<p class="hint tight">كل وسيط يدخل التطبيق برقم جواله، ويشوف العملاء ويسجّل نتيجة اتصاله.</p>' +
+        '<div class="rows" id="obTeam"><div class="skel skel-row"></div></div>' +
+        '<div class="grid2"><div class="field"><label for="obTName">اسم الوسيط</label><input id="obTName" class="input" autocomplete="off"></div>' +
+        '<div class="field"><label for="obTPhone">جواله</label><input id="obTPhone" class="input ltr" type="tel" inputmode="tel" placeholder="05XXXXXXXX">' +
+        '<p class="hint" id="obTHint"></p></div></div>' +
+        '<button class="btn ghost" type="button" id="obTAdd">أضف الوسيط</button>' + navH("خلصت، التالي");
+      var loadTeam = function () {
+        return call({ action: "staff_list" }).then(function (r) {
+          var list = (r.staff || []).filter(function (x) { return x.role === "agent" && x.active !== false; });
+          $("#obTeam").innerHTML = list.length ? list.map(function (x) {
+            return '<div class="row static"><div class="main"><span class="t">' + esc(x.name) + '</span><span class="s ltr num">' +
+              esc(fmtPhone(x.phone)) + "</span></div></div>";
+          }).join("") : '<p class="hint">ما أضفت وسطاء بعد. إذا تشتغل لحالك، تخطّ الخطوة.</p>';
+        }).catch(function () { $("#obTeam").innerHTML = ""; });
+      };
+      loadTeam();
+      $("#obTPhone").oninput = function () {
+        var p = normPhone(this.value), bad = this.value.trim() ? phoneIssue(p) : null;
+        $("#obTHint").className = "hint " + (bad ? "warn" : this.value.trim() ? "good" : "");
+        $("#obTHint").textContent = bad || (this.value.trim() ? fmtPhone(p) : "");
+      };
+      $("#obTAdd").onclick = function () {
+        var b = this, p = normPhone($("#obTPhone").value), bad = phoneIssue(p);
+        if (!$("#obTName").value.trim()) { note("#obMsg", "اكتب اسم الوسيط", "err"); return; }
+        if (bad) { note("#obMsg", bad, "err"); return; }
+        b.disabled = true; note("#obMsg", "", "");
+        call({ action: "staff_save", staff: { name: $("#obTName").value.trim(), phone: p, role: "agent" } }).then(function () {
+          $("#obTName").value = ""; $("#obTPhone").value = ""; $("#obTHint").textContent = "";
+          note("#obMsg", "أضفناه. يدخل برقم جواله ويوصله رمز الدخول على الواتساب.", "ok");
+          return loadTeam();
+        }).catch(function (e) { note("#obMsg", e.message, "err"); }).then(function () { b.disabled = false; });
+      };
+    }
+    if ($("#obNext")) $("#obNext").onclick = function () { next(this); };
+    if ($("#obSkip")) $("#obSkip").onclick = function () { paint(i + 1); };
+  }
+  paint(start);
+}
+
+/* ---------- رخصة فال: صاحب المكتب يطلب التعديل، ومقصد تعدّل ---------- */
+function renderFalRequest() {
+  var h = $("#falReqBox");
+  if (!h) return;
+  var o = S.me.office;
+  if (!isOwnerMe()) { h.innerHTML = ""; return; }
+  h.innerHTML = o.fal_request
+    ? '<div class="msg ok">' + svg(ICON.clock) + "<span>أرسلت طلب تعديل الرخصة " + esc(ago(o.fal_request.at)) +
+      ". نراجعه ونبلغك أول ما نخلّص.</span></div>"
+    : '<button class="btn ghost" type="button" id="btnFalReq">' + (falOf(o).state === "ok" ? "تجددت رخصتك؟ اطلب تعديل" : "ارفع صورة رخصة فال") + "</button>" +
+      '<p class="hint">رقم الرخصة وبياناتها تعدّلها مقصد بعد التحقق من الهيئة — عشان ما يشتغل أي مكتب بلا ترخيص.</p>';
+  if ($("#btnFalReq")) $("#btnFalReq").onclick = function () { openFalRequest(); };
+}
+
+function readUpload(file) {
+  if (!file) return Promise.reject(new Error("اختر صورة الرخصة أو ملف PDF"));
+  if (file.type === "application/pdf") {
+    if (file.size > 3 * 1024 * 1024) return Promise.reject(new Error("الملف كبير — الحد ٣ ميجابايت. صوّر الرخصة بدل الـ PDF"));
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { res(fr.result); };
+      fr.onerror = function () { rej(new Error("تعذّرت قراءة الملف")); };
+      fr.readAsDataURL(file);
+    });
+  }
+  return shrinkImage(file);
+}
+
+function openFalRequest(after) {
+  openSheet("طلب تعديل رخصة فال",
+    '<p class="lead">ارفع صورة شهادة رخصة فال الجديدة (أو ملف PDF). نطابقها مع استعلام الهيئة العامة للعقار، ونعدّل بيانات مكتبك.</p>' +
+    '<div class="field"><span class="flabel">صورة الرخصة</span>' +
+      '<input id="frFile" class="vh" type="file" accept="image/*,application/pdf">' +
+      '<div class="fal-pickrow"><label class="btn ghost fal-pick" for="frFile" id="frPick">اختر الصورة أو الملف</label></div>' +
+      '<p class="hint" id="frName"></p></div>' +
+    '<div class="field"><label for="frNote">وش تغيّر؟ <span class="opt">(اختياري)</span></label>' +
+      '<textarea id="frNote" class="input" rows="2" maxlength="300" placeholder="مثلاً: جددت الرخصة لسنة"></textarea></div>' +
+    '<button class="btn" type="button" id="frSend" disabled>أرسل الطلب</button><div id="frMsg"></div>');
+  var data = null;
+  $("#frFile").onchange = function () {
+    var f = this.files && this.files[0];
+    $("#frName").textContent = f ? f.name : "";
+    $("#frSend").disabled = true; note("#frMsg", "", "");
+    readUpload(f).then(function (u) { data = u; $("#frSend").disabled = false; $("#frPick").textContent = "غيّر الملف"; })
+      .catch(function (e) { data = null; note("#frMsg", e.message, "err"); });
+  };
+  $("#frSend").onclick = function () {
+    var b = this; b.disabled = true; note("#frMsg", "جاري الإرسال…", "ok");
+    call({ action: "fal_request", file: data, note: $("#frNote").value }).then(function () {
+      S.me.office.fal_request = { at: new Date().toISOString(), note: $("#frNote").value || null };
+      renderFalRequest();
+      note("#frMsg", "وصل طلبك. نراجعه ونبلغك.", "ok");
+      setTimeout(function () { if (after) after(); else closeSheet(); }, 900);
+    }).catch(function (e) { note("#frMsg", e.message, "err"); b.disabled = false; });
+  };
+}
+
+/* ---------- «سجّل مكتبك» من شاشة الدخول ---------- */
+var JOIN_API = "https://dindcejhsaxqwdkxtkcy.supabase.co/functions/v1/join?forceFunctionRegion=eu-central-1";
+function openSignup() {
+  var started = Date.now(), file = null;
+  openSheet("سجّل مكتبك في مقصد",
+    '<p class="lead">عبّ البيانات وارفع صورة رخصة فال. نراجع طلبك ونتواصل معك على الواتساب لترتيب التشغيل.</p>' +
+    '<div class="field"><label for="suOffice">اسم المكتب</label><input id="suOffice" class="input" maxlength="120" autocomplete="organization"></div>' +
+    '<div class="field"><label for="suName">اسمك</label><input id="suName" class="input" maxlength="80" autocomplete="name"></div>' +
+    '<div class="grid2"><div class="field"><label for="suPhone">جوال الواتساب</label>' +
+      '<input id="suPhone" class="input ltr" type="tel" inputmode="tel" placeholder="05XXXXXXXX" autocomplete="tel"></div>' +
+      '<div class="field"><label for="suCity">المدينة</label><input id="suCity" class="input" maxlength="40" placeholder="الرياض"></div></div>' +
+    '<div class="field"><label for="suFal">رقم رخصة فال</label><input id="suFal" class="input ltr" inputmode="numeric" maxlength="20"></div>' +
+    '<div class="field"><span class="flabel">صورة رخصة فال</span>' +
+      '<input id="suFile" class="vh" type="file" accept="image/*,application/pdf">' +
+      '<div class="fal-pickrow"><label class="btn ghost fal-pick" for="suFile" id="suPick">اختر صورة الرخصة أو PDF</label></div>' +
+      '<p class="hint" id="suFileName">نتحقق منها من الهيئة العامة للعقار قبل التشغيل.</p></div>' +
+    '<div class="field"><label for="suAgents">عدد الوسطاء</label><select id="suAgents" class="input">' +
+      '<option value="">اختر</option><option value="1">وحدي</option><option value="2-5">٢ إلى ٥</option>' +
+      '<option value="6-15">٦ إلى ١٥</option><option value="16+">أكثر من ١٥</option></select></div>' +
+    '<div class="hp" aria-hidden="true"><input id="suWeb" tabindex="-1" autocomplete="off"></div>' +
+    '<label class="toggle" for="suConsent"><input id="suConsent" type="checkbox"><span>أوافق على ' +
+      '<a href="https://maqsadapp.com/privacy.html" target="_blank" rel="noopener">سياسة الخصوصية</a>، وعلى تواصلكم معي على الواتساب بخصوص الطلب.</span></label>' +
+    '<button class="btn" type="button" id="suSend">أرسل الطلب</button><div id="suMsg"></div>');
+  $("#suFile").onchange = function () {
+    var f = this.files && this.files[0];
+    file = null; note("#suMsg", "", "");
+    if (!f) return;
+    $("#suFileName").textContent = f.name;
+    readUpload(f).then(function (u) { file = u; $("#suPick").textContent = "غيّر الملف"; })
+      .catch(function (e) { note("#suMsg", e.message, "err"); });
+  };
+  $("#suSend").onclick = function () {
+    var b = this, v = function (id) { return $(id).value.trim(); };
+    var phone = normPhone(v("#suPhone")), fal = digits(latinDigits(v("#suFal")));
+    var err = v("#suOffice").length < 2 ? "اكتب اسم المكتب" : v("#suName").length < 2 ? "اكتب اسمك"
+      : !/^9665\d{8}$/.test(phone) ? "اكتب رقم جوال سعودي يبدأ بـ 05" : fal.length < 4 ? "اكتب رقم رخصة فال"
+      : !file ? "ارفع صورة رخصة فال" : !$("#suConsent").checked ? "الموافقة على سياسة الخصوصية مطلوبة" : null;
+    if (err) { note("#suMsg", err, "err"); return; }
+    b.disabled = true; b.textContent = "جاري الإرسال…"; note("#suMsg", "", "");
+    fetch(JOIN_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      v: 2, office_name: v("#suOffice"), contact_name: v("#suName"), phone: phone, city: v("#suCity"),
+      fal_license: fal, fal_file: file, agents: $("#suAgents").value, consent: true, website: v("#suWeb"),
+      t: Date.now() - started,
+    }) }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.ok) {
+          var f = res.j.fields ? Object.keys(res.j.fields).map(function (k) { return res.j.fields[k]; })[0] : null;
+          throw new Error(f || res.j.error || "تعذّر الإرسال الآن، حاول بعد دقيقة");
+        }
+        $("#sheetBody").innerHTML = '<div class="ob-hi"><h4>' + (res.j.duplicate ? "طلبك وصلنا من قبل" : "وصل طلبك") + "</h4>" +
+          "<p>نراجع بيانات مكتبك ورخصة فال، ونتواصل معك على الواتساب على الرقم " + esc(fmtPhone(phone)) +
+          ". بعد التفعيل تدخل التطبيق بنفس الرقم.</p></div>" +
+          '<button class="btn" type="button" id="suOk">تمام</button>';
+        $("#suOk").onclick = closeSheet;
+      }).catch(function (e) {
+        note("#suMsg", e.message === "Failed to fetch" ? "ما قدرنا نوصل للخادم. تأكد من الإنترنت وحاول مرة ثانية." : e.message, "err");
+        b.disabled = false; b.textContent = "أرسل الطلب";
+      });
   };
 }
 

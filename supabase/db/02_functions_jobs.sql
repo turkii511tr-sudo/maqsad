@@ -498,4 +498,6 @@ select cron.schedule('maqsad-warm', '*/4 * * * *', '
 
 insert into storage.buckets (id, name, public) values ('backups', 'backups', false) on conflict (id) do nothing;
 insert into storage.buckets (id, name, public) values ('fal-proofs', 'fal-proofs', false) on conflict (id) do nothing;
+update storage.buckets set file_size_limit = 3145728,
+  allowed_mime_types = array['image/jpeg','image/png','image/webp','application/pdf'] where id = 'fal-proofs';
 insert into storage.buckets (id, name, public) values ('site', 'site', true) on conflict (id) do nothing;

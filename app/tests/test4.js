@@ -1,7 +1,7 @@
 // اختبار الواجهة v4: نتيجة الاتصال · «ينتظر اتصالك» بأسباب التسليم · أداء المكتب · الاستهلاك والتكلفة · حالات العقار
 const { chromium } = require('playwright');
 const path = require('path');
-const OFFICE = { id:'o1', name:'مكتب الأفق العقاري', code:'OFFICE_01', license_no:'1200012345', msg_quota:15, debounce_seconds:7, wa_number:'966501112345', wa_provider:'cloud' };
+const OFFICE = { id:'o1', name:'مكتب الأفق العقاري', code:'OFFICE_01', license_no:'1200012345', msg_quota:15, debounce_seconds:7, wa_number:'966501112345', wa_provider:'cloud', onboarded:true };
 const STATUS = { can_edit:true, is_super:true, office_name:OFFICE.name, whatsapp:true, wa_number:'966501112345', wa_provider:'cloud', msg_quota:15,
   my_phone:'966501116789', my_role:'super_admin', openai:true, telegram:true, meta:true, otp_platform:true, otp_template:'maqsad_login', platform_phone_id:'1',
   meta_webhook:'https://x/wa-webhook?forceFunctionRegion=eu-central-1', wa_instance:'111', telegram_chat_id:'-100', errors:[] };
@@ -146,7 +146,7 @@ const check = (name, cond, extra) => { R[name] = !!cond; if (!cond) fails.push(n
   { // المشغّل: الاستهلاك والتكلفة
     for (const [w, scheme] of [[400, 'light'], [1280, 'dark']]) {
       const { ctx, p } = await open('super_admin', w, scheme);
-      await p.click('.nav button[data-screen="s-offices"]'); await p.waitForTimeout(400);
+      await p.click('.nav button[data-screen="s-platform"]'); await p.waitForTimeout(400);
       const body = await p.$eval('#usageBody', n => n.textContent);
       check('usage@' + w + ':totalSar', body.includes('1.35'), body.slice(0, 300));          // 0.36$ × 3.75
       check('usage@' + w + ':perCustomer', body.includes('0.03 ريال'), body.slice(0, 300));   // 1.35 / 40

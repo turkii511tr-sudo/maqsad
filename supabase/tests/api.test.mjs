@@ -575,6 +575,125 @@ await test("إيقاف موظف يحذف أجهزته من التنبيهات", 
   assert.equal(T.push_subs.length, 0);
 });
 
+// ===== v13: لوحة المدير · طلب تعديل الرخصة · خطوات أول دخول =====
+await test("v13: جلسة المدير تنتهي بعد ٧ أيام من إنشائها، وجلسة المكتب تبقى", async () => {
+  const old = new Date(Date.now() - 8 * 864e5).toISOString();
+  const { h } = await boot((d) => { for (const x of d.sessions) x.created_at = old; });
+  assert.equal((await call(h, { action: "me" }, "sa")).status, 401);
+  assert.equal((await call(h, { action: "me" }, "s1")).status, 200);
+});
+
+await test("v13: دخول المدير الجديد مدته ٧ أيام، والموظف ٣٠", async () => {
+  const { T, h } = await boot((d) => { d.otps = [{ phone: "966500000009", code_hash: H("123456"),
+    expires_at: future, attempts: 0 }, { phone: "966500000001", code_hash: H("654321"), expires_at: future, attempts: 0 }]; });
+  const a = await call(h, { action: "verify_otp", phone: "0500000009", code: "123456" });
+  const b = await call(h, { action: "verify_otp", phone: "0500000001", code: "654321" });
+  assert.equal(a.status, 200, JSON.stringify(a.body)); assert.equal(b.status, 200);
+  const days = (id) => Math.round((new Date(T.sessions.filter((x) => x.staff_id === id).at(-1).expires_at) - Date.now()) / 864e5);
+  assert.equal(days("sa"), 7); assert.equal(days("s1"), 30);
+});
+
+await test("v13: تعديل المدير يُسجّل (أسماء الحقول بلا قيم)، وتعديل المكتب لنفسه لا", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "office_save", office: { id: "o1", name: "مكتب الأفق", code: "UFQ", license_no: "1100", wa_token: "SECRET-XYZ" } }, "sa");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const log = T.events.filter((e) => e.kind === "admin_action");
+  assert.equal(log.length, 1);
+  assert.equal(log[0].detail.label, "بيانات المكتب");
+  assert.deepEqual(log[0].detail.fields, ["wa_token"], "بس الحقل اللي تغيّر فعلاً");
+  assert.ok(!JSON.stringify(log[0]).includes("SECRET-XYZ"), "قيمة سرية في السجل");
+  await call(h, { action: "notify_save", telegram: true, push: true }, "s1");
+  assert.equal(T.events.filter((e) => e.kind === "admin_action").length, 1);
+  r = await call(h, { action: "admin_log" }, "sa");
+  assert.equal(r.body.log.length, 1);
+  assert.equal((await call(h, { action: "admin_log" }, "s1")).status, 403);
+});
+
+await test("v13: إعدادات المنصة — نموذج الذكاء من قائمة محددة فقط", async () => {
+  const { T, h } = await boot();
+  assert.equal((await call(h, { action: "platform_save", ai_model: "gpt-9-evil" }, "sa")).status, 400);
+  assert.equal((await call(h, { action: "platform_save", ai_model: "gpt-6-luna", ai_reasoning: "medium" }, "sa")).status, 200);
+  assert.equal(T.app_secrets.find((x) => x.key === "AI_MODEL").value, "gpt-6-luna");
+  assert.equal(T.app_secrets.find((x) => x.key === "AI_REASONING").value, "medium");
+  assert.equal((await call(h, { action: "platform_save", ai_model: "gpt-4o-mini" }, "s1")).status, 403);
+  const pl = T.events.filter((e) => e.kind === "admin_action").at(-1);
+  assert.equal(pl.office_id, null); assert.equal(pl.detail.office, null);
+  const st = await call(h, { action: "settings_status" }, "sa");
+  assert.equal(st.body.ai_model, "gpt-6-luna");
+});
+
+await test("v13: تشغيل الصوتيات لمكتب من شاشة التعديل", async () => {
+  const { T, h } = await boot((d) => d.app_secrets.push({ key: "VOICE_OFFICES", value: "OTHER" }));
+  let r = await call(h, { action: "office_save", office: { id: "o1", name: "مكتب الأفق", code: "UFQ", license_no: "1100", voice: true } }, "sa");
+  assert.equal(T.app_secrets.find((x) => x.key === "VOICE_OFFICES").value, "OTHER,UFQ");
+  assert.equal(r.body.offices.find((o) => o.id === "o1").voice, true);
+  r = await call(h, { action: "office_save", office: { id: "o1", name: "مكتب الأفق", code: "UFQ", license_no: "1100", voice: false } }, "sa");
+  assert.equal(T.app_secrets.find((x) => x.key === "VOICE_OFFICES").value, "OTHER");
+});
+
+await test("v13: تحويل طلب انضمام لمكتب ينقل صورة الرخصة للمكتب", async () => {
+  const { T, h } = await bootFal((d) => d.signup_requests = [{ id: 7, office_name: "مكتب جديد", contact_name: "خالد", phone: "966551234567",
+    fal_license: "3300", status: "new", fal_proof_path: "signups/x.jpg", created_at: future }]);
+  T.__store.set("fal-proofs/signups/x.jpg", {});
+  const l = await call(h, { action: "signup_list" }, "sa");
+  assert.equal(l.body.requests[0].has_proof, true); assert.equal(l.body.requests[0].fal_proof_path, undefined);
+  const u = await call(h, { action: "signup_proof", signup_id: 7 }, "sa");
+  assert.match(u.body.url, /signups\/x\.jpg/);
+  const r = await call(h, { action: "office_save", office: { name: "مكتب جديد", code: "NEW", license_no: "3300", from_signup: 7 } }, "sa");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const o = T.offices.find((x) => x.code === "NEW");
+  assert.equal(o.fal_signup_proof, "signups/x.jpg");
+  assert.equal(r.body.offices.find((x) => x.code === "NEW").has_signup_proof, true);
+  assert.equal((await call(h, { action: "signup_proof", signup_id: 7 }, "s1")).status, 403);
+});
+
+await test("v13: صاحب المكتب يطلب تعديل الرخصة بصورة، وما يقدر يغيّر الرقم بنفسه", async () => {
+  const { T, h, f } = await bootFal();
+  assert.equal((await call(h, { action: "office_save", office: { id: "o1", name: "x", code: "UFQ", license_no: "9999" } }, "s1")).status, 403);
+  assert.equal((await call(h, { action: "fal_request", file: JPG, note: "جددت الرخصة" }, "s2")).status, 403);
+  const r = await call(h, { action: "fal_request", file: JPG, note: "جددت الرخصة" }, "s1");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const o1 = T.offices.find((o) => o.id === "o1");
+  assert.equal(o1.license_no, "1100");
+  assert.match(o1.fal_request.path, /^requests\/o1\/.+\.jpg$/);
+  assert.ok(f.calls.some((c) => c.url.includes("api.telegram.org") && /طلب تعديل رخصة/.test(c.body?.text || "")));
+  const me = await call(h, { action: "me" }, "s1");
+  assert.equal(me.body.office.fal_request.note, "جددت الرخصة");
+  const lst = await call(h, { action: "offices_list" }, "sa");
+  assert.equal(lst.body.offices.find((o) => o.id === "o1").fal_request.note, "جددت الرخصة");
+  assert.equal((await call(h, { action: "signup_proof", office_id: "o1", kind: "request" }, "sa")).status, 200);
+  await call(h, { action: "fal_request_close", office_id: "o1" }, "sa");
+  assert.equal(T.offices.find((o) => o.id === "o1").fal_request, null);
+});
+
+await test("v13: خطوات أول دخول — تُحفظ الخطوات وينتهي بإنهائها", async () => {
+  const { T, h } = await boot();
+  let me = await call(h, { action: "me" }, "s1");
+  assert.equal(me.body.office.onboarded, false);
+  await call(h, { action: "onboarding_save", done: ["office", "notify", "hack"] }, "s1");
+  const o1 = T.offices.find((o) => o.id === "o1");
+  assert.deepEqual(Object.keys(o1.onboarding).sort(), ["notify", "office"]);
+  assert.equal((await call(h, { action: "onboarding_save", finish: true }, "s2")).status, 403);
+  await call(h, { action: "onboarding_save", finish: true }, "s1");
+  me = await call(h, { action: "me" }, "s1");
+  assert.equal(me.body.office.onboarded, true);
+});
+
+await test("v13: صاحب المكتب يضيف وسيط لمكتبه فقط، وما يرقّي أحد ولا يعدّل صاحب ثاني", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "staff_save", staff: { name: "سعد", phone: "0551112222", role: "owner", office_id: "o2" } }, "s1");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const n = T.staff.find((x) => x.phone === "966551112222");
+  assert.equal(n.role, "agent"); assert.equal(n.office_id, "o1");
+  r = await call(h, { action: "staff_save", staff: { id: "s1", name: "صاحب", phone: "966500000001", role: "agent" } }, "s1");
+  assert.equal(r.status, 403);
+  r = await call(h, { action: "staff_save", staff: { id: "s3", name: "x", phone: "966500000003" } }, "s1");
+  assert.equal(r.status, 403);
+  r = await call(h, { action: "staff_save", staff: { id: n.id, name: "سعد", phone: "0551112222", active: false } }, "s1");
+  assert.equal(r.status, 200); assert.equal(T.staff.find((x) => x.id === n.id).active, false);
+  assert.equal((await call(h, { action: "staff_save", staff: { name: "x", phone: "0551113333" } }, "s2")).status, 403);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

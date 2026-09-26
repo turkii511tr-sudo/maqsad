@@ -174,7 +174,11 @@ create table public.offices (
   fal_note text,
   fal_reminded integer,
   notify_telegram boolean not null default true,
-  notify_push boolean not null default true
+  notify_push boolean not null default true,
+  fal_signup_proof text,
+  fal_request jsonb,
+  onboarded_at timestamp with time zone,
+  onboarding jsonb not null default '{}'::jsonb
 );
 
 create table public.otps (
@@ -249,7 +253,8 @@ create table public.signup_requests (
   ip_hash text,
   status text not null default 'new'::text,
   created_at timestamp with time zone not null default now(),
-  updated_at timestamp with time zone not null default now()
+  updated_at timestamp with time zone not null default now(),
+  fal_proof_path text
 );
 
 create table public.staff (
@@ -418,3 +423,5 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on public.staff to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on public.usage_daily to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on public.v_listable_properties to service_role;
+
+create index if not exists events_kind_id_idx on public.events (kind, id desc);

@@ -129,7 +129,44 @@
   }
 
   /* ---------- نموذج الانضمام ---------- */
+  // صورة الرخصة: تُقرأ لحظة اختيارها (الصور تُصغَّر لأطول ضلع ٢٠٠٠ بكسل)، وتُرسل مع الطلب
+  function readLicense(file) {
+    return new Promise(function (res, rej) {
+      if (!file) { rej(new Error("أرفق صورة رخصة فال")); return; }
+      var pdf = file.type === "application/pdf";
+      if (!pdf && !/^image\//.test(file.type || "")) { rej(new Error("الملف لازم يكون صورة أو PDF")); return; }
+      if (pdf && file.size > 3 * 1024 * 1024) { rej(new Error("ملف PDF كبير — الحد ٣ ميجابايت. صوّر الرخصة بدله")); return; }
+      var fr = new FileReader();
+      fr.onerror = function () { rej(new Error("تعذّرت قراءة الملف")); };
+      fr.onload = function () {
+        if (pdf) { res(fr.result); return; }
+        var im = new Image();
+        im.onerror = function () { rej(new Error("الصورة تالفة — جرّب صورة ثانية")); };
+        im.onload = function () {
+          var k = Math.min(1, 2000 / Math.max(im.naturalWidth, im.naturalHeight));
+          var c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+          var g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+          g.drawImage(im, 0, 0, c.width, c.height);
+          var q = 0.88, out = c.toDataURL("image/jpeg", q);
+          while (out.length > 2.6e6 && q > 0.5) { q -= 0.12; out = c.toDataURL("image/jpeg", q); }
+          res(out);
+        };
+        im.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
   var join = $("#joinForm");
+  var falData = null, falErr = null;
+  if (join && join.elements.fal_file) {
+    join.elements.fal_file.addEventListener("change", function () {
+      falData = null; falErr = null;
+      readLicense(this.files && this.files[0])
+        .then(function (d) { falData = d; })
+        .catch(function (e) { falErr = e.message; });
+    });
+  }
   if (join) {
     wire(join, {
       collect: function (f) {
@@ -143,6 +180,8 @@
           note: clean(val(f, "note")),
           consent: val(f, "consent") === true,
           website: val(f, "website"),
+          fal_file: falData,
+          v: 2,
         };
       },
       validate: function (d) {
@@ -150,7 +189,9 @@
         if (d.office_name.length < 2) e.office_name = "اكتب اسم المكتب";
         if (d.contact_name.length < 2) e.contact_name = "اكتب اسمك";
         if (!saudiMobile(d.phone)) e.phone = "اكتب رقم جوال سعودي يبدأ بـ 05";
-        if (d.fal_license && (d.fal_license.length < 4 || d.fal_license.length > 20)) e.fal_license = "رقم رخصة فال من ٤ إلى ٢٠ رقماً";
+        if (!d.fal_license) e.fal_license = "اكتب رقم رخصة فال";
+        else if (d.fal_license.length < 4 || d.fal_license.length > 20) e.fal_license = "رقم رخصة فال من ٤ إلى ٢٠ رقماً";
+        if (!d.fal_file) e.fal_file = falErr || "أرفق صورة رخصة فال";
         if (!d.consent) e.consent = "الموافقة على سياسة الخصوصية مطلوبة لإرسال الطلب";
         return e;
       },

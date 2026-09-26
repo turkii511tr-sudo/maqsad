@@ -472,6 +472,8 @@ select.input{background-image:linear-gradient(45deg,transparent 50%,var(--ink-3)
 .input.ltr::placeholder{text-align:right}
 .hint{font-size:15.5px;color:var(--ink-3);margin-top:6px;line-height:1.5}
 .field.bad .input{border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-wash)}
+.input.file{padding:10px;cursor:pointer;font-size:15px}
+.input.file::file-selector-button{font:inherit;margin-inline-end:12px;padding:6px 14px;border:1px solid var(--line);border-radius:4px;background:var(--sunk);color:var(--ink);cursor:pointer}
 .ferr{font-size:16px;color:var(--danger);margin-top:6px;line-height:1.5;font-weight:600}
 .check + .ferr{margin:-14px 0 18px}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:16px;color:var(--ink-2);line-height:1.6;margin:8px 0 22px;cursor:pointer}

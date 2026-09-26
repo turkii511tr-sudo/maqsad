@@ -2,7 +2,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const OFFICE = { id:'o1', name:'مكتب الأفق العقاري', code:'OFFICE_01', license_no:'1200012345', msg_quota:15, debounce_seconds:7,
-  wa_number:'966501112345', wa_provider:'cloud', fal:{ state:'ok', expires_on:'2027-06-01', days_left:250 } };
+  wa_number:'966501112345', wa_provider:'cloud', fal:{ state:'ok', expires_on:'2027-06-01', days_left:250 }, onboarded:true };
 const KEY = 'BA_mkw8nP3zReJdGrcs3R782nEcDbqRtm77Ozzzy6fCgMy0sPbG8XKJCl18EJnzLao60_gtbJtDBeG_WEW8nDb0';
 const R = {}; const fails = []; const errs = [];
 const check = (n, c, x) => { R[n] = !!c; if (!c) fails.push(n + (x ? ' — ' + x : '')); };

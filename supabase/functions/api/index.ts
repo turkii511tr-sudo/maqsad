@@ -1,4 +1,7 @@
-// مقصد — واجهة المنصة (v12)
+// مقصد — واجهة المنصة (v13)
+// v13: لوحة المدير — جلسة المدير ٧ أيام، سجل لكل تعديل يسويه المدير، نموذج الذكاء والصوتيات من اللوحة.
+//      رخصة فال: صورة الرخصة من طلب الانضمام تنتقل للمكتب، والمكتب يطلب التعديل بصورة (المدير وحده يعدّل).
+//      خطوات أول دخول للمكتب (onboarding) · إضافة العقار تقبل ترخيص الإعلان من الخطوات
 // v12: التنبيهات — المكتب يختار تيليجرام أو إشعارات الجوال أو الاثنين. ربط تيليجرام بضغطة زر (رابط البوت
 //      برمز لمرة وحدة بدل كتابة رقم المحادثة)، وتفعيل إشعارات الجوال لكل جهاز مع تجربة فورية
 // v11: رخصة فال — المشغّل يتحقق يدوياً من استعلام الهيئة (الحالة + الاسم + تاريخ الانتهاء) ويرفق صورة النتيجة،
@@ -178,11 +181,14 @@ async function audit(phone: string, ok: boolean, reason: string, req: Request, s
   await db.from("login_audit").insert({ phone, ok, reason, ip: ipOf(req), staff_id: staffId ?? null });
 }
 
-async function newSession(staffId: string) {
+// جلسة المدير أقصر: حسابه يتحكم في كل المكاتب
+const SUPER_DAYS = 7, STAFF_DAYS = 30;
+async function newSession(staffId: string, role?: string) {
   const token = crypto.randomUUID() + crypto.randomUUID();
+  const days = role === "super_admin" ? SUPER_DAYS : STAFF_DAYS;
   await db.from("sessions").insert({
     token_hash: await sha(token), staff_id: staffId, kind: "session",
-    expires_at: new Date(Date.now() + 30 * 864e5).toISOString(),
+    expires_at: new Date(Date.now() + days * 864e5).toISOString(),
   });
   return token;
 }
@@ -190,7 +196,7 @@ async function newSession(staffId: string) {
 async function session(req: Request) {
   const raw = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!raw) return null;
-  const { data: s } = await db.from("sessions").select("staff_id,expires_at,kind")
+  const { data: s } = await db.from("sessions").select("staff_id,expires_at,kind,created_at")
     .eq("token_hash", await sha(raw)).maybeSingle();
   // تذكرة الدخول لا تصلح كجلسة — تُستبدل فقط
   if (!s || s.kind !== "session" || new Date(s.expires_at) < new Date()) return null;
@@ -199,6 +205,8 @@ async function session(req: Request) {
   if (!st) return null;
   const isSuper = st.role === "super_admin";
   if (!isSuper && (st as any).offices?.active === false) return null;
+  // جلسات المدير القديمة (قبل تقصير المدة) تنتهي بعد ٧ أيام من إنشائها
+  if (isSuper && s.created_at && Date.now() - new Date(s.created_at).getTime() > SUPER_DAYS * 864e5) return null;
   return { staff: st, office: (st as any).offices, isSuper };
 }
 
@@ -252,6 +260,26 @@ function parseImage(v: unknown): Img | { error: string } {
   if (!png && !jpg && !webp) return { error: "الملف مو صورة — أرفق لقطة شاشة PNG أو JPG" };
   return png ? { bytes, mime: "image/png", ext: "png" }
     : jpg ? { bytes, mime: "image/jpeg", ext: "jpg" } : { bytes, mime: "image/webp", ext: "webp" };
+}
+// ملف رخصة فال من صاحب المكتب: صورة أو PDF، بحد ٣ ميجابايت
+function parseUpload(v: unknown): Img | { error: string } {
+  const pdf = /^data:application\/pdf;base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(v ?? ""));
+  if (!pdf) {
+    const r = parseImage(v);
+    return "error" in r ? { error: "أرفق صورة رخصة فال (صورة أو PDF)" } : r;
+  }
+  let bin = "";
+  try { bin = atob(pdf[1].replace(/\s/g, "")); } catch { return { error: "الملف تالف — جرّب ملف ثاني" }; }
+  if (bin.length > 3 * 1024 * 1024) return { error: "الملف كبير — الحد ٣ ميجابايت" };
+  if (bin.slice(0, 5) !== "%PDF-") return { error: "الملف مو PDF صالح" };
+  return { bytes: Uint8Array.from(bin, (ch) => ch.charCodeAt(0)), mime: "application/pdf", ext: "pdf" };
+}
+async function putFile(prefix: string, f: Img) {
+  const path = `${prefix}/${new Date().toISOString().replace(/[:.]/g, "-")}.${f.ext}`;
+  try {
+    const { error } = await db.storage.from(FAL_BUCKET).upload(path, f.bytes, { contentType: f.mime, upsert: false });
+    return error ? null : path;
+  } catch { return null; }
 }
 async function putProof(officeId: string, img: Img) {
   const path = `${officeId}/${new Date().toISOString().replace(/[:.]/g, "-")}.${img.ext}`;
@@ -359,22 +387,38 @@ async function statusFor(ctx: any, office: any, oid: string) {
     base.platform_phone_id = isSet(s.PLATFORM_WA_PHONE_ID) ? s.PLATFORM_WA_PHONE_ID : "";
     base.wa_instance = office.wa_instance;
     base.telegram_chat_id = office.telegram_chat_id;
+    base.ai_model = s.AI_MODEL || "gpt-4o-mini";
+    base.ai_reasoning = s.AI_REASONING || "low";
+    base.operator_tg = isSet(s.OPERATOR_TG_CHAT);
   }
   return base;
+}
+
+// المكاتب المفعّل لها تحويل الصوتيات لنص: رموز مفصولة بفواصل، أو * للكل
+function voiceSet(s: Record<string, string>) {
+  return new Set(String(s.VOICE_OFFICES ?? "").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean));
 }
 
 async function officesFor() {
   const { data } = await db.from("offices")
     .select("id,code,name,license_no,wa_number,wa_provider,wa_instance,active,msg_quota,telegram_chat_id," +
-            "fal_status,fal_expires_on,fal_holder_name,fal_verified_at,fal_note,fal_proof_path")
+            "fal_status,fal_expires_on,fal_holder_name,fal_verified_at,fal_note,fal_proof_path," +
+            "fal_signup_proof,fal_request,onboarded_at,created_at")
     .order("created_at");
+  const voice = voiceSet(await secrets());
   return Promise.all((data ?? []).map(async (o: any) => {
     const { count: leads } = await db.from("customers")
       .select("id", { count: "exact", head: true }).eq("office_id", o.id);
     const { count: props } = await db.from("properties")
       .select("id", { count: "exact", head: true }).eq("office_id", o.id);
-    const { fal_status, fal_expires_on, fal_holder_name, fal_verified_at, fal_note, fal_proof_path, ...rest } = o;
-    return { ...rest, wa_linked: !!o.wa_instance, leads, props, fal: falInfo(o) };
+    const { fal_status, fal_expires_on, fal_holder_name, fal_verified_at, fal_note, fal_proof_path,
+            fal_signup_proof, fal_request, ...rest } = o;
+    return {
+      ...rest, wa_linked: !!o.wa_instance, leads, props, fal: falInfo(o),
+      voice: voice.has("*") || voice.has(String(o.code).toUpperCase()),
+      has_signup_proof: !!fal_signup_proof,
+      fal_request: fal_request ? { note: fal_request.note ?? null, at: fal_request.at, by: fal_request.by ?? null } : null,
+    };
   }));
 }
 
@@ -421,7 +465,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       .eq("id", m.staff_id).eq("active", true).maybeSingle();
     if (!st) return json({ error: "الحساب موقوف" }, 403);
 
-    const token = await newSession(st.id);
+    const token = await newSession(st.id, st.role);
     await db.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", st.id);
     await audit(st.phone, true, "magic_redeemed", req, st.id);
     return json({ ok: true, token, staff: { name: st.name, role: st.role } });
@@ -483,7 +527,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
     }
     const { data: st } = await db.from("staff").select("*")
       .eq("phone", phone).eq("active", true).single();
-    const token = await newSession(st.id);
+    const token = await newSession(st.id, st.role);
     await db.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", st.id);
     await db.from("otps").delete().eq("phone", phone);
     await audit(phone, true, "login_ok", req, st.id);
@@ -511,9 +555,14 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       msg_quota: office.msg_quota, debounce_seconds: office.debounce_seconds,
       wa_number: office.wa_number, wa_provider: office.wa_provider,
       fal: falInfo(office),
+      onboarded: !!office.onboarded_at, onboarding: office.onboarding ?? {},
+      fal_request: office.fal_request ? { at: office.fal_request.at, note: office.fal_request.note ?? null } : null,
     },
   });
 
+  // كل الإجراءات؛ وتعديلات المدير تُسجّل بعد نجاحها (مع الحقول اللي تغيّرت فعلاً إن عُرفت)
+  let changed: string[] | null = null;
+  const act = async (): Promise<Response> => {
   switch (action) {
     case "bootstrap": {
       const [leads, props, status, offices, signups] = await Promise.all([
@@ -574,7 +623,15 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       // رقم رخصة جديد = تحقق جديد: التحقق السابق كان لرقم ثاني
       let falReset: { from: string; to: string } | null = null;
       if (o.id) {
-        const { data: cur } = await db.from("offices").select("license_no,fal_status").eq("id", o.id).maybeSingle();
+        const { data: cur } = await db.from("offices").select("*").eq("id", o.id).maybeSingle();
+        if (cur) {
+          changed = Object.keys(row).filter((k) => k !== "wa_token" && k in cur && String(cur[k] ?? "") !== String(row[k] ?? ""));
+          if (row.wa_token && row.wa_token !== cur.wa_token) changed.push("wa_token");
+          if (typeof o.voice === "boolean") {
+            const vs = voiceSet(await secrets());
+            if (!vs.has("*") && vs.has(String(row.code)) !== o.voice) changed.push("voice");
+          }
+        }
         if (cur && licenseKey(cur.license_no) !== row.license_no) {
           Object.assign(row, { fal_status: "pending", fal_verified_at: null, fal_verified_by: null,
             fal_note: null, fal_reminded: null });
@@ -592,8 +649,24 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
           detail: { by: ctx.staff.name, ...falReset } });
       }
       if (o.from_signup) {
-        await db.from("signup_requests").update({ status: "converted", updated_at: new Date().toISOString() })
-          .eq("id", Number(o.from_signup));
+        const { data: sr } = await db.from("signup_requests")
+          .update({ status: "converted", updated_at: new Date().toISOString() })
+          .eq("id", Number(o.from_signup)).select("fal_proof_path").maybeSingle();
+        // صورة الرخصة اللي رفعها صاحب الطلب تنتقل للمكتب: يطابقها المدير مع استعلام الهيئة
+        if (sr?.fal_proof_path) {
+          await db.from("offices").update({ fal_signup_proof: sr.fal_proof_path }).eq("id", res.data!.id);
+        }
+      }
+      if (typeof o.voice === "boolean") {
+        const s = await secrets();
+        const set = voiceSet(s);
+        const code = String(row.code);
+        if (!set.has("*")) {
+          if (o.voice) set.add(code); else set.delete(code);
+          await db.from("app_secrets").upsert({ key: "VOICE_OFFICES", value: [...set].join(","),
+            updated_at: new Date().toISOString() });
+          sc = null;
+        }
       }
       return json({ ok: true, office: res.data, offices: await officesFor() });
     }
@@ -605,17 +678,22 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
     }
 
     case "staff_save": {
-      if (!isSuper) return json({ error: "forbidden" }, 403);
+      // صاحب المكتب يضيف وسطاء مكتبه ويعدّلهم ويوقفهم فقط — ما يغيّر الأدوار ولا يلمس مكتب ثاني
+      if (!isSuper && ctx.staff.role !== "owner") return json({ error: "forbidden" }, 403);
       const st = b.staff ?? {};
+      if (!isSuper) { st.role = "agent"; st.office_id = oid; }
       const phone = norm(String(st.phone ?? ""));
       const bad = phoneProblem(phone);
       if (bad) return json({ error: bad }, 400);
       const role = ["owner", "agent"].includes(st.role) ? st.role : "agent";
       let before: any = null;
       if (st.id) {
-        const { data: cur } = await db.from("staff").select("id,phone,role").eq("id", st.id).maybeSingle();
+        const { data: cur } = await db.from("staff").select("id,phone,role,office_id").eq("id", st.id).maybeSingle();
         if (!cur) return json({ error: "الموظف غير موجود" }, 404);
         if (cur.role === "super_admin") return json({ error: "حساب مشغّل المنصة لا يُعدّل من هنا" }, 403);
+        if (!isSuper && (cur.office_id !== oid || cur.role !== "agent")) {
+          return json({ error: "تقدر تعدّل وسطاء مكتبك فقط" }, 403);
+        }
         before = { phone: String(cur.phone) };   // نسخة، لا مرجع للصف
       }
       const row: Record<string, unknown> = {
@@ -763,7 +841,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       await tellOffice(office,
         `⛔ ما قدرنا نعتمد رخصة فال لمكتب ${office.name}\n\nالسبب: ${why}\n\n` +
         `المساعد الآلي متوقف عن الرد على العملاء لين نتحقق من الرخصة. ` +
-        `أرسلوا لمقصد صورة شهادة فال سارية باسم المكتب.\n\n— مقصد`);
+        `ارفعوا صورة شهادة فال سارية باسم المكتب من تطبيق مقصد ← الإعدادات ← مكتبي.\n\n— مقصد`);
       return json({ ok: true, fal: falInfo({ ...office, ...patch }), offices: await officesFor() });
     }
 
@@ -782,6 +860,84 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       return json({ url: data.signedUrl });
     }
 
+    // ===== لوحة المدير =====
+    case "admin_log": {
+      if (!isSuper) return json({ error: "forbidden" }, 403);
+      const { data } = await db.from("events").select("id,office_id,detail,created_at")
+        .eq("kind", "admin_action").order("id", { ascending: false }).limit(Math.min(Number(b.limit) || 60, 200));
+      return json({ log: data ?? [] });
+    }
+
+    case "platform_save": {
+      if (!isSuper) return json({ error: "forbidden" }, 403);
+      const MODELS = ["gpt-6-luna", "gpt-4o-mini"], EFFORT = ["low", "medium", "high"];
+      const put = async (k: string, v: string) =>
+        await db.from("app_secrets").upsert({ key: k, value: v, updated_at: new Date().toISOString() });
+      if (b.ai_model !== undefined) {
+        if (!MODELS.includes(String(b.ai_model))) return json({ error: "نموذج غير معروف" }, 400);
+        await put("AI_MODEL", String(b.ai_model));
+      }
+      if (b.ai_reasoning !== undefined) {
+        if (!EFFORT.includes(String(b.ai_reasoning))) return json({ error: "مستوى غير معروف" }, 400);
+        await put("AI_REASONING", String(b.ai_reasoning));
+      }
+      sc = null;
+      return json({ ok: true });
+    }
+
+    // صورة رخصة فال المرفوعة مع طلب الانضمام، أو المرفوعة مع طلب تعديل من المكتب
+    case "signup_proof": {
+      if (!isSuper) return json({ error: "forbidden" }, 403);
+      let path: string | null = null;
+      if (b.signup_id !== undefined) {
+        const { data } = await db.from("signup_requests").select("fal_proof_path").eq("id", Number(b.signup_id)).maybeSingle();
+        path = data?.fal_proof_path ?? null;
+      } else if (b.kind === "request") {
+        path = office.fal_request?.path ?? null;
+      } else {
+        path = office.fal_signup_proof ?? null;
+      }
+      if (!path) return json({ error: "ما فيه ملف مرفوع" }, 404);
+      const { data, error } = await db.storage.from(FAL_BUCKET).createSignedUrl(path, 300);
+      if (error || !data?.signedUrl) return json({ error: "تعذّر فتح الملف" }, 500);
+      return json({ url: data.signedUrl, pdf: /\.pdf$/i.test(path) });
+    }
+
+    // صاحب المكتب يطلب تعديل رخصته: يرفع الرخصة الجديدة، والمدير وحده يعدّل الرقم ويعتمد
+    case "fal_request": {
+      if (!isOwner) return json({ error: "طلب التعديل لصاحب المكتب فقط" }, 403);
+      const file = parseUpload(b.file);
+      if ("error" in file) return json({ error: file.error }, 400);
+      const path = await putFile(`requests/${oid}`, file);
+      if (!path) return json({ error: "تعذّر حفظ الملف، حاول مرة ثانية" }, 500);
+      const note = String(b.note ?? "").replace(/[<>]/g, " ").trim().slice(0, 300) || null;
+      await db.from("offices").update({ fal_request: { path, note, at: new Date().toISOString(), by: ctx.staff.name } })
+        .eq("id", oid);
+      await db.from("events").insert({ office_id: oid, kind: "fal_change_requested", detail: { by: ctx.staff.name } });
+      await tellOperator(`🪪 طلب تعديل رخصة فال\n\n🏢 ${office.name}\n👤 ${ctx.staff.name}` +
+        (note ? `\n📝 ${note}` : "") + `\n\nتجده في منصة مقصد ← المكاتب ← ${office.name} ← رخصة فال.`);
+      return json({ ok: true });
+    }
+
+    case "fal_request_close": {
+      if (!isSuper) return json({ error: "forbidden" }, 403);
+      await db.from("offices").update({ fal_request: null }).eq("id", oid);
+      return json({ ok: true, offices: await officesFor() });
+    }
+
+    // خطوات أول دخول: الخطوات المنجزة، وإنهاؤها أو تخطيها
+    case "onboarding_save": {
+      if (!isOwner) return json({ error: "forbidden" }, 403);
+      const STEPS = ["office", "notify", "property", "team"];
+      const cur = (office.onboarding ?? {}) as Record<string, string>;
+      const next: Record<string, string> = { ...cur };
+      for (const k of Array.isArray(b.done) ? b.done : []) if (STEPS.includes(k)) next[k] = new Date().toISOString();
+      const patch: Record<string, unknown> = { onboarding: next };
+      if (b.finish === true) patch.onboarded_at = new Date().toISOString();
+      await db.from("offices").update(patch).eq("id", oid);
+      return json({ ok: true, onboarding: next, onboarded: b.finish === true || !!office.onboarded_at });
+    }
+
     case "backups_status": {
       if (!isSuper) return json({ error: "forbidden" }, 403);
       const { data } = await db.from("backup_runs")
@@ -794,9 +950,9 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
     case "signup_list": {
       if (!isSuper) return json({ error: "forbidden" }, 403);
       const { data } = await db.from("signup_requests")
-        .select("id,office_name,contact_name,phone,city,fal_license,agents,note,status,created_at")
+        .select("id,office_name,contact_name,phone,city,fal_license,agents,note,status,created_at,fal_proof_path")
         .order("created_at", { ascending: false }).limit(100);
-      return json({ requests: data ?? [] });
+      return json({ requests: (data ?? []).map(({ fal_proof_path, ...r }: any) => ({ ...r, has_proof: !!fal_proof_path })) });
     }
 
     case "signup_update": {
@@ -1142,4 +1298,46 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
   }
 
   return json({ error: "unknown action" }, 400);
+  };
+  const res = await act();
+  if (isSuper && res.status < 400 && ADMIN_LOGGED.has(action)) {
+    try { await logAdmin(ctx, action, b, oid, office, changed); } catch { /* السجل ليس شرطاً لنجاح العملية */ }
+  }
+  return res;
+}
+
+// ===== سجل تعديلات المدير =====
+// يُحفظ من غيّر ماذا وفي أي مكتب — أسماء الحقول فقط، بلا قيم (ما نحفظ مفاتيح أو أرقام في السجل)
+const ADMIN_LOGGED = new Set([
+  "office_save", "staff_save", "staff_delete", "fal_verify", "fal_reject", "fal_request_close",
+  "signup_update", "save_settings", "platform_save", "property_save", "lead_outcome", "set_mode",
+  "notify_save", "tg_unlink",
+]);
+const ACTION_AR: Record<string, string> = {
+  office_save: "بيانات المكتب", staff_save: "موظف", staff_delete: "حذف موظف",
+  fal_verify: "اعتماد رخصة فال", fal_reject: "رفض رخصة فال", fal_request_close: "طلب تعديل الرخصة",
+  signup_update: "طلب انضمام", save_settings: "إعدادات الربط", platform_save: "إعدادات المنصة",
+  property_save: "عقار", lead_outcome: "نتيجة اتصال", set_mode: "وضع محادثة",
+  notify_save: "التنبيهات", tg_unlink: "فصل تيليجرام",
+};
+// إعدادات تخص المنصة كلها (مو مكتب بعينه)
+const PLATFORM_ACTIONS = new Set(["platform_save", "signup_update"]);
+async function logAdmin(ctx: any, action: string, b: any, oid: string, office: any, changed: string[] | null) {
+  const filled = (o: any) => o && typeof o === "object" ? Object.keys(o).filter((k) => o[k] !== "" && o[k] != null) : [];
+  // تعديل مكتب: الحقول اللي تغيّرت فعلاً · إعدادات الربط: المفاتيح اللي انكتبت · غيرها: اسم العنصر بدل الحقول
+  const fields = (changed ?? (action === "save_settings" ? filled(b.settings) : action === "office_save" ? filled(b.office) : []))
+    .filter((k) => k !== "id" && k !== "office_id").slice(0, 20);
+  const platformWide = PLATFORM_ACTIONS.has(action) ||
+    (action === "save_settings" && !b.office_id && !filled(b.settings).some((k) => ["wa_instance", "wa_token", "wa_number", "msg_quota", "telegram_chat_id"].includes(k)));
+  const target = action === "office_save" ? (b.office?.id ?? null) : platformWide ? null : oid;
+  await db.from("events").insert({
+    office_id: target, kind: "admin_action",
+    detail: {
+      by: ctx.staff.name, action, label: ACTION_AR[action] ?? action, fields,
+      office: action === "office_save" ? String(b.office?.name ?? "") : target ? office?.name ?? null : null,
+      what: action === "property_save" ? String(b.property?.title ?? "") || null
+        : action === "staff_save" ? String(b.staff?.name ?? "") || null : null,
+      ref: b.id ?? b.lead_id ?? b.property?.id ?? b.staff?.id ?? null,
+    },
+  });
 }
