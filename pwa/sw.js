@@ -1,5 +1,5 @@
 // مقصد — عامل الخدمة: يجعل التطبيق قابلاً للتثبيت ويفتح فوراً، ويستقبل إشعارات الجوال
-const SHELL = "maqsad-shell-v3";
+const SHELL = "maqsad-shell-v4";
 const FILES = ["/", "/index.html", "/manifest.webmanifest",
                "/icon-192.png", "/icon-512.png", "/icon-maskable-192.png", "/icon-maskable-512.png",
                "/apple-touch-icon.png", "/badge-96.png"];

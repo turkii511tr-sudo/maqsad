@@ -2658,18 +2658,16 @@ function termsPending() {
 }
 function openTerms(after) {
   var t = S.me.office.terms;
-  openSheet("قبل ما تبدأ: بيانات عملائك",
-    '<p class="hint tight">مقصد يعالج بيانات عملائك نيابة عنك، وأنت المسؤول عنها نظاماً. هذي أهم النقاط:</p>' +
+  openSheet("أهلاً بك في مقصد",
+    '<p class="hint tight">كلمة سريعة عن بيانات عملائك قبل ما تبدأ:</p>' +
     '<ul class="terms-pts">' +
-      "<li><b>بيانات عملائك لك.</b> نستخدمها لتشغيل المساعد وتنبيهاتك فقط، ولا نبيعها ولا نعطيها لمكتب ثاني ولا نسوّق عليها.</li>" +
-      "<li><b>وين تُحفظ:</b> قاعدة البيانات في ألمانيا. الذكاء الاصطناعي في أمريكا ويوصله نص الطلب بعد ما نخفي الاسم والأرقام.</li>" +
-      "<li><b>مدة الحفظ:</b> نص المحادثات ٩٠ يوماً، وملخص الطلب طوال اشتراكك، وبعد انتهائه نحذف الكل خلال ٩٠ يوماً.</li>" +
-      "<li><b>عليك:</b> تتواصل مع العميل لطلبه العقاري فقط، وتحترم «توقف» و«احذف بياناتي».</li>" +
-      "<li><b>أي حادثة تمس البيانات</b> نبلغك فيها فوراً ونساعدك في إبلاغ الجهة المختصة.</li>" +
+      "<li><b>بياناتهم لك وحدك.</b> ما نبيعها ولا نشاركها مع أحد.</li>" +
+      "<li><b>نستخدمها عشان نخدمك:</b> المساعد يرد على عملائك ويرتّب طلباتهم لك.</li>" +
+      "<li><b>محفوظة بأمان</b>، وأي عميل يطلب حذف بياناته تنحذف مباشرة.</li>" +
     "</ul>" +
-    '<p class="hint">النص الكامل: <a href="' + TERMS_URL + '" target="_blank" rel="noopener">شروط الاستخدام ← اتفاقية معالجة البيانات</a> · نسخة <span class="num">' + esc(t.version) + "</span></p>" +
-    '<label class="toggle" for="tAgree" style="margin:14px 0"><input id="tAgree" type="checkbox"><span>قرأت الشروط واتفاقية معالجة البيانات وأوافق عليها باسم مكتبي</span></label>' +
-    '<button class="btn" id="tOk" type="button" disabled>موافق</button>' +
+    '<p class="hint">التفاصيل كاملة في <a href="' + TERMS_URL + '" target="_blank" rel="noopener">اتفاقية معالجة البيانات</a>.</p>' +
+    '<label class="toggle" for="tAgree" style="margin:14px 0"><input id="tAgree" type="checkbox"><span>أوافق على الشروط واتفاقية معالجة البيانات</span></label>' +
+    '<button class="btn" id="tOk" type="button" disabled>ابدأ</button>' +
     '<button class="btn ghost" id="tLater" type="button" style="margin-top:8px">لاحقاً</button><div id="tMsg"></div>');
   var later = function () { closeSheet(); renderToday(); };
   $("#sheetClose").onclick = later; $("#scrim").onclick = later; $("#tLater").onclick = later;

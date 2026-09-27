@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""يولّد صورة المشاركة (og.png) وكل الأيقونات من هوية «الختم الكوفي». يحتاج Playwright (يُشغَّل مرة عند تغيير الهوية).
-كل ما في الصور هندسة مرسومة (الكوفي المربّع) — لا يعتمد على أي خط مثبّت في جهاز البناء.
+"""يولّد صورة المشاركة (og.png) وكل الأيقونات من هوية «الدبوس». يحتاج Playwright (يُشغَّل مرة عند تغيير الهوية).
+كل ما في الصور هندسة مرسومة — لا يعتمد على أي خط مثبّت في جهاز البناء.
 العنوان والوصف يظهران تحت الصورة في واتساب وتويتر من وسوم الصفحة، فالصورة نفسها بلا نص عربي."""
 import subprocess, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import art, sadu
+import art
 
 ROOT = Path(__file__).resolve().parent.parent
 IMG = ROOT / "src" / "assets" / "img"
@@ -14,25 +14,29 @@ IMG.mkdir(parents=True, exist_ok=True)
 T = ROOT / "tools"
 
 og = f"""<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
-{sadu.css()}
 *{{margin:0;box-sizing:border-box}}
 html,body{{width:1200px;height:630px;overflow:hidden}}
-body{{background:#17110E;color:#F3EDE2;position:relative}}
-.fr{{position:absolute;left:0;right:0;height:22px;background:#17110E var(--sd-frieze) 50% 0/46px 22px repeat-x}}
-.top{{top:0}} .bot{{bottom:0}}
-.b-st{{position:absolute;left:110px;top:78px;width:372px;box-shadow:0 30px 50px -24px rgba(0,0,0,.9)}}
-.b-st svg{{display:block;width:100%;height:auto}}
-.b-wm{{position:absolute;right:110px;top:190px;width:520px;color:#F3EDE2}}
-.b-wm svg{{display:block;width:100%;height:auto}}
-.rule{{position:absolute;right:110px;top:410px;width:520px;height:4px;background:#A5231B}}
-.url{{position:absolute;right:110px;top:446px;font:500 30px/1 "DejaVu Sans",sans-serif;letter-spacing:.06em;color:#D9A13B;direction:ltr}}
+body{{background:{art.NAVY};color:{art.MIST};position:relative;
+  background-image:radial-gradient(rgba(243,246,249,.07) 1.2px,transparent 1.6px);background-size:26px 26px}}
+.bar{{position:absolute;left:0;right:0;bottom:0;height:10px;background:{art.AMBER}}}
+.map{{position:absolute;left:96px;top:64px;width:392px;height:502px;border-radius:28px;overflow:hidden;background:#173753;
+  border:2px solid #28496B;color:#1F4466;box-shadow:0 40px 60px -30px rgba(0,0,0,.7)}}
+.map svg{{display:block;width:100%;height:100%}}
+.map .pl-num,.map .pl-lbl{{fill:#93A7BC;font:12px "DejaVu Sans",sans-serif}}
+.map .pl-lbl{{font-size:0}}
+.map .pl-pick{{fill:rgba(233,162,59,.16);stroke:{art.AMBER};stroke-width:1.6}}
+.pl-pin-ring{{fill:none;stroke:{art.MIST}}} .pl-pin-tail{{fill:{art.MIST}}} .pl-pin-shadow{{fill:{art.AMBER}}}
+.lk{{position:absolute;right:104px;top:176px;display:flex;align-items:center;gap:18px;color:{art.MIST}}}
+.lk .mono{{width:150px;height:150px;overflow:visible}}
+.lk .wm{{width:430px;height:auto}}
+.rule{{position:absolute;right:104px;top:392px;width:598px;height:4px;border-radius:4px;background:#28496B}}
+.url{{position:absolute;right:104px;top:432px;font:500 30px/1 "DejaVu Sans",sans-serif;letter-spacing:.06em;color:{art.AMBER};direction:ltr}}
 </style></head><body>
-<div class="fr top"></div>
-<div class="b-st">{art.stele()}</div>
-<div class="b-wm">{art.wordmark()}</div>
+<div class="map">{art.plan_svg(cls="plan")}</div>
+<div class="lk">{art.monogram()}{art.wordmark()}</div>
 <div class="rule"></div>
 <div class="url">maqsadapp.com</div>
-<div class="fr bot"></div>
+<div class="bar"></div>
 </body></html>"""
 (T / "og.html").write_text(og, encoding="utf-8")
 

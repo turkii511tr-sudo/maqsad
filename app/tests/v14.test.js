@@ -90,7 +90,10 @@ async function addProp(p) {
   await test('صاحب المكتب يطلع له طلب الموافقة، والزر ما يشتغل قبل الصح، وتُرسل النسخة', async () => {
     const { p, api, errors, ctx } = await page(b);
     assert.equal(await p.isVisible('#sheet.on'), true);
-    assert.match(await p.textContent('#sheetBody'), /ألمانيا/);
+    const tb = await p.textContent('#sheetBody');
+    assert.match(tb, /لك وحدك/);
+    assert.doesNotMatch(tb, /ألمانيا|أمريكا|حادثة|نظاماً/);
+    assert.equal(await p.$$eval('.terms-pts li', (x) => x.length), 3);
     assert.equal(await p.isDisabled('#tOk'), true);
     await shot(p, 'terms-m');
     await p.check('#tAgree');

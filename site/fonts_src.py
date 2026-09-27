@@ -9,10 +9,7 @@ AR = ("U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-0
 LA = ("U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, "
       "U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD")
 G = "https://fonts.gstatic.com/s/"
-FACES = [  # (subset, family, weight, url) — «أميري» نسخ للعناوين الكبيرة، و«بلكس» للنص والأزرار
-    ("arabic", "Amiri", "400", G + "amiri/v30/J7aRnpd8CGxBHpUrtLMA7w.woff2"),
-    ("arabic", "Amiri", "700", G + "amiri/v30/J7acnpd8CGxBHp2VkaY6zp5yGw.woff2"),
-    ("latin",  "Amiri", "700", G + "amiri/v30/J7acnpd8CGxBHp2VkaY_zp4.woff2"),
+FACES = [  # (subset, family, weight, url) — «بلكس» للعناوين والنص والأزرار
     ("arabic", "IBM Plex Sans Arabic", "400", G + "ibmplexsansarabic/v15/Qw3CZRtWPQCuHme67tEYUIx3Kh0PHR9N6Ys43PWrfQ.woff2"),
     ("latin",  "IBM Plex Sans Arabic", "400", G + "ibmplexsansarabic/v15/Qw3CZRtWPQCuHme67tEYUIx3Kh0PHR9N6Ys93PU.woff2"),
     ("arabic", "IBM Plex Sans Arabic", "500", G + "ibmplexsansarabic/v15/Qw3NZRtWPQCuHme67tEYUIx3Kh0PHR9N6YPO_-CRXMR5Kw.woff2"),
@@ -22,10 +19,10 @@ FACES = [  # (subset, family, weight, url) — «أميري» نسخ للعنا�
     ("arabic", "IBM Plex Sans Arabic", "700", G + "ibmplexsansarabic/v15/Qw3NZRtWPQCuHme67tEYUIx3Kh0PHR9N6YOG-eCRXMR5Kw.woff2"),
     ("latin",  "IBM Plex Sans Arabic", "700", G + "ibmplexsansarabic/v15/Qw3NZRtWPQCuHme67tEYUIx3Kh0PHR9N6YOG-eCUXMQ.woff2"),
 ]
-# تُحمَّل مبكراً: خط النص العادي وخط العنوان الرئيسي (أول ما يظهر في الصفحة)
-PRELOAD = [("arabic", "IBM Plex Sans Arabic", "400"), ("arabic", "Amiri", "700")]
-GOOGLE_CSS = ("https://fonts.googleapis.com/css2?family=Amiri:wght@400;700"
-              "&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap")
+# تُحمَّل مبكراً: خط النص العادي ووزن العناوين (أول ما يظهر في الصفحة)
+PRELOAD = [("arabic", "IBM Plex Sans Arabic", "400"), ("arabic", "IBM Plex Sans Arabic", "700")]
+GOOGLE_CSS = ("https://fonts.googleapis.com/css2?"
+              "family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap")
 
 def css(prefix="/gf/"):
     out = ["/* خطوط مقصد — تُحمَّل من نطاق الموقع نفسه (بلا طلبات لطرف ثالث من متصفح الزائر) */"]

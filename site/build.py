@@ -11,7 +11,6 @@ from pathlib import Path
 
 import art
 import fonts_src
-import sadu
 
 ROOT = Path(__file__).resolve().parent
 SRC, DIST, PREV = ROOT / "src", ROOT / "dist", ROOT / "preview"
@@ -100,7 +99,7 @@ def build(mode, cfg):
         shutil.rmtree(out)
     (out / "assets").mkdir(parents=True)
 
-    css = sadu.css() + (SRC / "assets" / "site.css").read_text(encoding="utf-8")
+    css = (SRC / "assets" / "site.css").read_text(encoding="utf-8")
     js = (SRC / "assets" / "site.js").read_text(encoding="utf-8")
     fonts_css = fonts_src.css("/gf/")
     site_url = cfg.get("site_url", "").rstrip("/")
@@ -122,7 +121,7 @@ def build(mode, cfg):
         "year_ar": art.ar(cfg["effective_date"][:4]),
         "phase_early": cfg.get("launch_phase", "early") == "early",
         "phase_live": cfg.get("launch_phase") == "live",
-        "mono": art.monogram(), "wordmark": art.wordmark(), "stele": art.stele(), "seal": art.SEAL, "hand": art.HAND,
+        "mono": art.monogram(), "wordmark": art.wordmark(), "heromap": art.plan_svg(cls="plan"), "seal": art.SEAL, "hand": art.HAND,
         "plan404": art.plan_svg(cls="plan404", missing=211, pick=False),
         # تثبيت المعالجة في فرانكفورت (نفس منطقة قاعدة البيانات) كما تنص سياسة الخصوصية
         "join_endpoint": f"{api}/join{PIN}" if mode == "dist" else "",
