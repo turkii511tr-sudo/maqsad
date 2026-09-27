@@ -149,4 +149,4 @@ grant execute on function public.annual_budget(text, numeric, text) to service_r
 -- ===== ٤) موافقة المكتب على الشروط واتفاقية معالجة البيانات (من داخل التطبيق) =====
 alter table public.offices add column if not exists terms_version text;
 alter table public.offices add column if not exists terms_accepted_at timestamptz;
-alter table public.offices add column if not exists terms_accepted_by uuid references public.staff(id) on delete set null;
+alter table public.offices add column if not exists terms_accepted_by uuid;
