@@ -1,4 +1,7 @@
-// مقصد — واجهة المنصة (v14)
+// مقصد — واجهة المنصة (v15)
+// v15: الدخول بلا رسائل رموز مدفوعة — أول مرة برسالة «دخول مقصد ١٢٣٤» يرسلها الموظف من واتسابه (لرقم المنصة
+//      أو رقم مكتبه)، وبعدها بالبصمة (Passkeys، تحقق كامل بلا مكتبات). احتياط: رمز لمرة وحدة من المدير أو على
+//      تيليجرام المدير. جلسة الموظف ٩٠ يوماً، والخروج من الجهاز الحالي فقط
 // v14: عملاء سابقون يطابقون العقار (للمكتب نفسه فقط، آخر ٣٠ يوماً، بلا إرسال آلي) · موافقة صاحب المكتب على
 //      الشروط واتفاقية معالجة البيانات من داخل التطبيق (النسخة والتاريخ ومن وافق)
 // v13: لوحة المدير — جلسة المدير ٧ أيام، سجل لكل تعديل يسويه المدير، نموذج الذكاء والصوتيات من اللوحة.
@@ -94,39 +97,6 @@ async function sendWhatsApp(office: any, to: string, body: string) {
   } catch { return false; }
 }
 
-// رمز الدخول: من رقم المنصة الرسمي بقالب «مصادقة» معتمد من ميتا إن كان مضبوطاً (يصل في أي وقت)،
-// وإلا من رقم المكتب نفسه كرسالة عادية (تصل مع ميتا فقط داخل نافذة الـ٢٤ ساعة)
-async function sendLoginCode(office: any, phone: string, code: string) {
-  const s = await secrets();
-  if (isSet(s.PLATFORM_WA_PHONE_ID) && isSet(s.PLATFORM_WA_TOKEN) && isSet(s.OTP_TEMPLATE)) {
-    try {
-      const r = await fetch(`https://graph.facebook.com/v21.0/${s.PLATFORM_WA_PHONE_ID}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${s.PLATFORM_WA_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messaging_product: "whatsapp", to: phone, type: "template",
-          template: {
-            name: s.OTP_TEMPLATE, language: { code: s.OTP_TEMPLATE_LANG || "ar" },
-            components: [
-              { type: "body", parameters: [{ type: "text", text: code }] },
-              { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: code }] },
-            ],
-          },
-        }),
-      });
-      if (r.ok) { await bump(office?.id, { p_otp_platform: 1 }); return { ok: true, via: "platform" }; }
-      await db.from("events").insert({ office_id: office?.id ?? null, level: "error", kind: "otp_template_failed",
-        detail: { status: r.status, error: (await r.text()).slice(0, 300), to_last4: phone.slice(-4) } });
-    } catch (e) {
-      await db.from("events").insert({ office_id: office?.id ?? null, level: "error", kind: "otp_template_failed",
-        detail: { error: String(e).slice(0, 300), to_last4: phone.slice(-4) } });
-    }
-  }
-  const ok = await sendWhatsApp(office, phone, `رمز الدخول إلى مقصد: ${code}\nصالح ٥ دقائق. لا تشاركه مع أحد.`);
-  if (ok) await bump(office?.id, { p_otp_office: 1 });
-  return { ok, via: "office" };
-}
-
 // قراءة كاملة بصفحات من ١٠٠٠ صف (حد الخادم للطلب الواحد)
 async function readAll(build: () => any, cap: number) {
   const out: any[] = [];
@@ -183,8 +153,8 @@ async function audit(phone: string, ok: boolean, reason: string, req: Request, s
   await db.from("login_audit").insert({ phone, ok, reason, ip: ipOf(req), staff_id: staffId ?? null });
 }
 
-// جلسة المدير أقصر: حسابه يتحكم في كل المكاتب
-const SUPER_DAYS = 7, STAFF_DAYS = 30;
+// جلسة المدير أقصر: حسابه يتحكم في كل المكاتب. الرجوع بعدها ببصمة وحدة
+const SUPER_DAYS = 7, STAFF_DAYS = 90;
 async function newSession(staffId: string, role?: string) {
   const token = crypto.randomUUID() + crypto.randomUUID();
   const days = role === "super_admin" ? SUPER_DAYS : STAFF_DAYS;
@@ -211,6 +181,131 @@ async function session(req: Request) {
   if (isSuper && s.created_at && Date.now() - new Date(s.created_at).getTime() > SUPER_DAYS * 864e5) return null;
   return { staff: st, office: (st as any).offices, isSuper };
 }
+
+// ===== الدخول بلا رسائل رموز مدفوعة =====
+// أول مرة أو من جهاز جديد: الموظف يرسل «دخول مقصد ١٢٣٤» من واتساب جواله. الرسالة منه، فالرد مجاني،
+// وواتساب يثبت أنه صاحب الرقم. تُرسل لرقم المنصة الرسمي إن كان مضبوطاً، وإلا لرقم مكتبه نفسه.
+// بعدها البصمة (Passkeys). والاحتياط: رمز لمرة وحدة يصدره مشغّل المنصة، أو يصله هو على تيليجرام.
+const LOGIN_TTL_MIN = 5;
+const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+const arNum = (s: string) => s.replace(/\d/g, (d) => AR_DIGITS[Number(d)]);
+const rand4 = () => String(1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000));
+const rand6 = () => String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+const loginText = (nonce: string) => `دخول مقصد ${arNum(nonce)}`;
+
+async function loginChannel(st: any) {
+  const s = await secrets();
+  if (isSet(s.PLATFORM_WA_PHONE_ID) && isSet(s.PLATFORM_WA_TOKEN) && isSet(s.PLATFORM_WA_NUMBER)) {
+    return { channel: "platform", number: norm(s.PLATFORM_WA_NUMBER), office: null as string | null };
+  }
+  const o = st?.offices;
+  if (o && o.active !== false && o.wa_number && isSet(o.wa_token) && o.wa_instance) {
+    return { channel: "office", number: String(o.wa_number), office: String(o.id) };
+  }
+  return null;
+}
+
+// رمز احتياطي لمرة وحدة (يُدخل في شاشة «عندي رمز»): يُحفظ مختوماً فقط
+async function issueCode(phone: string, minutes: number) {
+  const code = rand6();
+  await db.from("otps").upsert({
+    phone, code_hash: await sha(code), attempts: 0, sent_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + minutes * 60000).toISOString(),
+  });
+  return code;
+}
+
+// ===== البصمة (WebAuthn / Passkeys): تحقق كامل بمكتبة التشفير المدمجة، بلا مكتبات خارجية =====
+const wB64 = (b: Uint8Array) => {
+  let s = "";
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+const wUnb64 = (s: string) => {
+  s = String(s ?? "").replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+};
+const sha256 = async (b: Uint8Array) => new Uint8Array(await crypto.subtle.digest("SHA-256", b as BufferSource));
+const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+// قارئ CBOR مختصر: يكفي لكائن الإثبات ومفتاح COSE (أعداد، نصوص، بايتات، مصفوفات، خرائط، true/false/null)
+function cbor(buf: Uint8Array, pos = 0): [any, number] {
+  const ib = buf[pos++], major = ib >> 5, info = ib & 31;
+  let len = info;
+  if (info === 24) len = buf[pos++];
+  else if (info === 25) { len = (buf[pos] << 8) | buf[pos + 1]; pos += 2; }
+  else if (info === 26) { len = ((buf[pos] << 24) >>> 0) + (buf[pos + 1] << 16) + (buf[pos + 2] << 8) + buf[pos + 3]; pos += 4; }
+  else if (info > 26) throw new Error("cbor_unsupported");
+  switch (major) {
+    case 0: return [len, pos];
+    case 1: return [-1 - len, pos];
+    case 2: return [buf.slice(pos, pos + len), pos + len];
+    case 3: return [new TextDecoder().decode(buf.slice(pos, pos + len)), pos + len];
+    case 4: { const a: any[] = []; for (let i = 0; i < len; i++) { const [v, p] = cbor(buf, pos); a.push(v); pos = p; } return [a, pos]; }
+    case 5: { const m = new Map<any, any>(); for (let i = 0; i < len; i++) { const [k, p1] = cbor(buf, pos); const [v, p2] = cbor(buf, p1); m.set(k, v); pos = p2; } return [m, pos]; }
+    case 7: return [info === 20 ? false : info === 21 ? true : null, pos];
+  }
+  throw new Error("cbor_unsupported");
+}
+
+type AuthData = { rpIdHash: Uint8Array; flags: number; count: number; credId?: Uint8Array; cose?: Map<number, any> };
+function parseAuthData(a: Uint8Array): AuthData {
+  if (a.length < 37) throw new Error("authdata_short");
+  const out: AuthData = { rpIdHash: a.slice(0, 32), flags: a[32], count: ((a[33] << 24) >>> 0) + (a[34] << 16) + (a[35] << 8) + a[36] };
+  if (out.flags & 0x40) {
+    const n = (a[53] << 8) | a[54];
+    out.credId = a.slice(55, 55 + n);
+    out.cose = cbor(a, 55 + n)[0];
+  }
+  return out;
+}
+
+// مفتاح COSE ← JWK (ES256 أو RS256 فقط)
+function coseToJwk(m: Map<number, any>) {
+  const kty = m.get(1), alg = m.get(3);
+  if (kty === 2 && alg === -7 && m.get(-1) === 1) return { alg, jwk: { kty: "EC", crv: "P-256", x: wB64(m.get(-2)), y: wB64(m.get(-3)) } };
+  if (kty === 3 && alg === -257) return { alg, jwk: { kty: "RSA", n: wB64(m.get(-1)), e: wB64(m.get(-2)) } };
+  throw new Error("key_unsupported");
+}
+
+// توقيع ECDSA يأتي بصيغة DER، ومكتبة التشفير تريده r‖s (٣٢+٣٢ بايت)
+function derToRaw(sig: Uint8Array) {
+  let p = 2;
+  if (sig[1] & 0x80) p += sig[1] & 0x7f;
+  const part = () => { p++; const n = sig[p++]; let v = sig.slice(p, p + n); p += n; while (v.length > 32 && v[0] === 0) v = v.slice(1); const o = new Uint8Array(32); o.set(v, 32 - v.length); return o; };
+  const r = part(), s = part();
+  const out = new Uint8Array(64); out.set(r); out.set(s, 32);
+  return out;
+}
+
+async function verifySig(alg: number, jwk: any, sig: Uint8Array, data: Uint8Array) {
+  if (alg === -7) {
+    const k = await crypto.subtle.importKey("jwk", { ...jwk, ext: true }, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    return crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, k, derToRaw(sig) as BufferSource, data as BufferSource);
+  }
+  const k = await crypto.subtle.importKey("jwk", { ...jwk, ext: true }, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify("RSASSA-PKCS1-v1_5", k, sig as BufferSource, data as BufferSource);
+}
+
+// نطاق البصمة = نطاق التطبيق نفسه، ومن النطاقات المسموحة فقط
+async function rpFor(req: Request) {
+  const o = req.headers.get("origin") ?? "";
+  let extra: string[] = [];
+  try { extra = String((await secrets()).ALLOWED_ORIGINS ?? "").split(",").map((x) => x.trim()).filter(Boolean); } catch { /* الأساسية */ }
+  if (!o || ![...BASE_ALLOWED, ...extra].includes(o)) return null;
+  return { origin: o, id: new URL(o).hostname };
+}
+
+function clientData(raw: string, type: string, challenge: string, rp: { origin: string; id: string }) {
+  let c: any;
+  try { c = JSON.parse(new TextDecoder().decode(wUnb64(raw))); } catch { return null; }
+  if (c?.type !== type || c?.challenge !== challenge) return null;
+  if (c?.origin !== rp.origin) return null;
+  return c;
+}
+
+const newChallenge = () => wB64(crypto.getRandomValues(new Uint8Array(32)));
 
 // ===== رخصة فال =====
 // اليوم بتوقيت الرياض (UTC+3 ثابت): الرخصة سارية حتى نهاية يوم انتهائها
@@ -384,8 +479,9 @@ async function statusFor(ctx: any, office: any, oid: string) {
     base.telegram = isSet(s.TELEGRAM_BOT_TOKEN) && String(s.TELEGRAM_BOT_TOKEN).includes(":");
     base.meta = isSet(s.META_APP_SECRET) && isSet(s.META_VERIFY_TOKEN);
     base.meta_webhook = `${FN_BASE}/wa-webhook${PIN}`;
-    base.otp_platform = isSet(s.PLATFORM_WA_PHONE_ID) && isSet(s.PLATFORM_WA_TOKEN) && isSet(s.OTP_TEMPLATE);
-    base.otp_template = isSet(s.OTP_TEMPLATE) ? s.OTP_TEMPLATE : "";
+    base.login_platform = isSet(s.PLATFORM_WA_PHONE_ID) && isSet(s.PLATFORM_WA_TOKEN) && isSet(s.PLATFORM_WA_NUMBER);
+    base.platform_token = isSet(s.PLATFORM_WA_TOKEN);
+    base.platform_number = isSet(s.PLATFORM_WA_NUMBER) ? s.PLATFORM_WA_NUMBER : "";
     base.platform_phone_id = isSet(s.PLATFORM_WA_PHONE_ID) ? s.PLATFORM_WA_PHONE_ID : "";
     base.wa_instance = office.wa_instance;
     base.telegram_chat_id = office.telegram_chat_id;
@@ -477,15 +573,21 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
     return json({ ok: true, token, staff: { name: st.name, role: st.role } });
   }
 
+  // رموز الدخول المرسلة من النظام أُلغيت (عليها رسوم): الدخول صار برسالة واتساب من الموظف نفسه أو بالبصمة
   if (action === "request_otp") {
+    return json({ error: "طريقة الدخول تغيّرت — حدّث التطبيق وادخل عن طريق رسالة واتساب أو البصمة" }, 410);
+  }
+
+  // ١) بداية الدخول عبر واتساب: نتحقق أن الرقم مسجّل، ونعطي التطبيق الرسالة الجاهزة والرقم اللي يرسل له
+  if (action === "login_start") {
     const phone = norm(b.phone);
     if (phone.length < 9) return json({ error: "رقم غير صالح" }, 400);
     const since = new Date(Date.now() - 864e5).toISOString();
     const { count } = await db.from("login_audit").select("id", { count: "exact", head: true })
-      .eq("phone", phone).eq("reason", "otp_sent").gte("created_at", since);
-    if ((count ?? 0) >= 10) {
-      await audit(phone, false, "otp_daily_cap", req);
-      return json({ error: "تجاوزت عدد محاولات الدخول اليوم. حاول بعد ٢٤ ساعة" }, 429);
+      .eq("phone", phone).eq("reason", "login_start").gte("created_at", since);
+    if ((count ?? 0) >= 20) {
+      await audit(phone, false, "login_daily_cap", req);
+      return json({ error: "محاولات دخول كثيرة اليوم. حاول بعد ٢٤ ساعة" }, 429);
     }
     const { data: st } = await db.from("staff").select("*,offices(*)")
       .eq("phone", phone).eq("active", true).maybeSingle();
@@ -497,24 +599,105 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       await audit(phone, false, "office_inactive", req, st.id);
       return json({ error: "حساب المكتب موقوف حالياً. تواصل مع مقصد." }, 403);
     }
-    const { data: prev } = await db.from("otps").select("sent_at").eq("phone", phone).maybeSingle();
-    if (prev && Date.now() - new Date(prev.sent_at).getTime() < 45000) {
-      return json({ error: "too_soon" }, 429);
+    const ch = await loginChannel(st);
+    if (!ch) {
+      await audit(phone, false, "login_no_channel", req, st.id);
+      return json({ error: "no_channel" }, 409);
     }
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    await db.from("otps").upsert({
-      phone, code_hash: await sha(code),
-      expires_at: new Date(Date.now() + 5 * 60000).toISOString(),
-      attempts: 0, sent_at: new Date().toISOString(),
-    });
-    const res = await sendLoginCode((st as any).offices, phone, code);
-    await audit(phone, res.ok, "otp_sent", req, st.id);
-    if (!res.ok) {
-      await db.from("events").insert({ office_id: (st as any).offices?.id ?? null, level: "error",
-        kind: "otp_not_delivered", detail: { to_last4: phone.slice(-4), via: res.via } });
+    // طلب واحد قائم لكل رقم: الجديد يلغي القديم اللي ما اكتمل
+    await db.from("login_requests").delete().eq("phone", phone).is("verified_at", null);
+    const nonce = rand4(), poll = crypto.randomUUID() + crypto.randomUUID();
+    const { data: row } = await db.from("login_requests").insert({
+      staff_id: st.id, phone, nonce, poll_hash: await sha(poll), channel: ch.channel, channel_office: ch.office,
+      device: String(b.device ?? "").slice(0, 40) || null,
+      expires_at: new Date(Date.now() + LOGIN_TTL_MIN * 60000).toISOString(),
+    }).select("id").single();
+    await audit(phone, true, "login_start", req, st.id);
+    return json({ id: row?.id, poll, wa: ch.number, text: loginText(nonce), ttl: LOGIN_TTL_MIN * 60 });
+  }
+
+  // ٢) التطبيق يسأل كل ثانيتين: وصلت رسالته؟ إذا وصلت نعطيه الجلسة مرة وحدة فقط
+  if (action === "login_poll") {
+    const { data: r } = await db.from("login_requests").select("*").eq("id", String(b.id ?? "")).maybeSingle();
+    if (!r || r.poll_hash !== await sha(String(b.poll ?? ""))) return json({ error: "not_found" }, 404);
+    if (r.used_at) return json({ state: "used" });
+    if (!r.verified_at) return json({ state: new Date(r.expires_at) < new Date() ? "expired" : "waiting" });
+    const { data: won } = await db.from("login_requests").update({ used_at: new Date().toISOString() })
+      .eq("id", r.id).is("used_at", null).select("staff_id").maybeSingle();
+    if (!won) return json({ state: "used" });
+    const { data: st } = await db.from("staff").select("*,offices(*)").eq("id", r.staff_id).eq("active", true).maybeSingle();
+    if (!st) return json({ error: "الحساب موقوف" }, 403);
+    if (st.role !== "super_admin" && (st as any).offices?.active === false) return json({ error: "حساب المكتب موقوف حالياً. تواصل مع مقصد." }, 403);
+    const token = await newSession(st.id, st.role);
+    await db.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", st.id);
+    await audit(st.phone, true, "login_ok_whatsapp", req, st.id);
+    return json({ ok: true, token, staff: { name: st.name, role: st.role } });
+  }
+
+  // احتياط مشغّل المنصة: رمز على محادثته الخاصة في تيليجرام (الرد نفسه لأي رقم، حتى لا يُعرف رقم المدير)
+  if (action === "admin_tg_code") {
+    const phone = norm(b.phone);
+    const { data: st } = await db.from("staff").select("id,phone,role").eq("phone", phone)
+      .eq("role", "super_admin").eq("active", true).maybeSingle();
+    const s = await secrets();
+    if (st && isSet(s.TELEGRAM_BOT_TOKEN) && isSet(s.OPERATOR_TG_CHAT)) {
+      const { data: prev } = await db.from("otps").select("sent_at").eq("phone", phone).maybeSingle();
+      if (!prev || Date.now() - new Date(prev.sent_at).getTime() > 45000) {
+        const code = await issueCode(phone, 10);
+        await telegramSend(s.TELEGRAM_BOT_TOKEN, s.OPERATOR_TG_CHAT,
+          `رمز دخول مقصد: ${code}\nصالح ١٠ دقائق. إذا ما طلبته أنت، تجاهله.`);
+        await audit(phone, true, "tg_code_sent", req, st.id);
+      }
     }
-    // لا نعيد اسم الموظف: من يعرف رقماً لا يحصل على اسم صاحبه
-    return json({ ok: true, delivered: res.ok });
+    return json({ ok: true });
+  }
+
+  // ٣) الدخول بالبصمة: بلا رقم — الجوال يعرض البصمات المحفوظة لهذا التطبيق
+  if (action === "pk_login_options") {
+    const rp = await rpFor(req);
+    if (!rp) return json({ error: "origin" }, 400);
+    const challenge = newChallenge();
+    const { data: row } = await db.from("auth_challenges").insert({
+      kind: "login", challenge, rp_id: rp.id, expires_at: new Date(Date.now() + 5 * 60000).toISOString(),
+    }).select("id").single();
+    return json({ cid: row?.id, challenge, rpId: rp.id, timeout: 120000 });
+  }
+
+  if (action === "pk_login_verify") {
+    const rp = await rpFor(req);
+    if (!rp) return json({ error: "origin" }, 400);
+    const fail = async (why: string) => { await audit("-", false, "pk_" + why, req); return json({ error: "ما قدرنا نتحقق من البصمة. ادخل عن طريق واتساب." }, 401); };
+    const { data: ch } = await db.from("auth_challenges").select("*").eq("id", String(b.cid ?? "")).maybeSingle();
+    if (!ch || ch.kind !== "login" || ch.used_at || new Date(ch.expires_at) < new Date() || ch.rp_id !== rp.id) return fail("challenge");
+    const { data: used } = await db.from("auth_challenges").update({ used_at: new Date().toISOString() })
+      .eq("id", ch.id).is("used_at", null).select("id").maybeSingle();
+    if (!used) return fail("challenge");
+    const { data: pk } = await db.from("passkeys").select("*").eq("cred_id", String(b.id ?? "")).maybeSingle();
+    if (!pk || pk.rp_id !== rp.id) return fail("unknown");
+    try {
+      if (!clientData(String(b.clientDataJSON ?? ""), "webauthn.get", ch.challenge, rp)) return fail("client");
+      const ad = wUnb64(String(b.authenticatorData ?? ""));
+      const info = parseAuthData(ad);
+      if (!sameBytes(info.rpIdHash, await sha256(new TextEncoder().encode(rp.id)))) return fail("rp");
+      if (!(info.flags & 0x01) || !(info.flags & 0x04)) return fail("uv");
+      const cdHash = await sha256(wUnb64(String(b.clientDataJSON)));
+      const data = new Uint8Array(ad.length + 32); data.set(ad); data.set(cdHash, ad.length);
+      if (!(await verifySig(pk.alg, pk.public_key, wUnb64(String(b.signature ?? "")), data))) return fail("sig");
+      if (b.userHandle && new TextDecoder().decode(wUnb64(String(b.userHandle))) !== pk.staff_id) return fail("user");
+      // عدّاد التوقيع: إذا رجع للخلف فالمفتاح منسوخ
+      if ((info.count > 0 || pk.sign_count > 0) && info.count <= pk.sign_count) {
+        await db.from("events").insert({ office_id: null, level: "error", kind: "passkey_counter", detail: { passkey: pk.id } });
+        return fail("counter");
+      }
+      await db.from("passkeys").update({ sign_count: info.count, last_used_at: new Date().toISOString() }).eq("id", pk.id);
+    } catch { return fail("parse"); }
+    const { data: st } = await db.from("staff").select("*,offices(*)").eq("id", pk.staff_id).eq("active", true).maybeSingle();
+    if (!st) return json({ error: "الحساب موقوف" }, 403);
+    if (st.role !== "super_admin" && (st as any).offices?.active === false) return json({ error: "حساب المكتب موقوف حالياً. تواصل مع مقصد." }, 403);
+    const token = await newSession(st.id, st.role);
+    await db.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", st.id);
+    await audit(st.phone, true, "login_ok_passkey", req, st.id);
+    return json({ ok: true, token, staff: { name: st.name, role: st.role } });
   }
 
   if (action === "verify_otp") {
@@ -526,17 +709,20 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       await audit(phone, false, "otp_locked", req);
       return json({ error: "too_many" }, 429);
     }
-    if (await sha(String(b.code ?? "")) !== o.code_hash) {
+    const code = String(b.code ?? "").replace(/[٠-٩]/g, (x) => String("٠١٢٣٤٥٦٧٨٩".indexOf(x))).replace(/\D/g, "");
+    if (await sha(code) !== o.code_hash) {
       await db.from("otps").update({ attempts: o.attempts + 1 }).eq("phone", phone);
       await audit(phone, false, "wrong_code", req);
       return json({ error: "wrong_code" }, 400);
     }
-    const { data: st } = await db.from("staff").select("*")
-      .eq("phone", phone).eq("active", true).single();
+    const { data: st } = await db.from("staff").select("*,offices(*)")
+      .eq("phone", phone).eq("active", true).maybeSingle();
+    await db.from("otps").delete().eq("phone", phone);
+    if (!st) return json({ error: "الحساب موقوف" }, 403);
+    if (st.role !== "super_admin" && (st as any).offices?.active === false) return json({ error: "حساب المكتب موقوف حالياً. تواصل مع مقصد." }, 403);
     const token = await newSession(st.id, st.role);
     await db.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", st.id);
-    await db.from("otps").delete().eq("phone", phone);
-    await audit(phone, true, "login_ok", req, st.id);
+    await audit(phone, true, "login_ok_code", req, st.id);
     return json({ ok: true, token, staff: { name: st.name, role: st.role } });
   }
 
@@ -1194,7 +1380,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (!isSuper) {
         if (s.openai_key || s.telegram_token || s.wa_token || s.wa_instance || s.wa_number ||
             s.meta_app_secret || s.meta_verify_token || s.platform_wa_phone_id || s.platform_wa_token ||
-            s.otp_template || s.otp_template_lang ||
+            s.platform_wa_number || s.otp_template || s.otp_template_lang ||
             s.price_ai_in || s.price_ai_cached || s.price_ai_out || s.price_otp) {
           return json({ error: "إعدادات الربط يضبطها مشغّل المنصة فقط" }, 403);
         }
@@ -1216,6 +1402,12 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (s.meta_verify_token) await put("META_VERIFY_TOKEN", String(s.meta_verify_token));
       if (s.platform_wa_phone_id) await put("PLATFORM_WA_PHONE_ID", String(s.platform_wa_phone_id).replace(/\D/g, ""));
       if (s.platform_wa_token) await put("PLATFORM_WA_TOKEN", String(s.platform_wa_token));
+      if (s.platform_wa_number) {
+        const pn = norm(String(s.platform_wa_number));
+        const bad = phoneProblem(pn);
+        if (bad) return json({ error: "رقم المنصة: " + bad }, 400);
+        await put("PLATFORM_WA_NUMBER", pn);
+      }
       if (s.otp_template) await put("OTP_TEMPLATE", String(s.otp_template).trim().toLowerCase());
       if (s.otp_template_lang) await put("OTP_TEMPLATE_LANG", String(s.otp_template_lang).trim());
       // الأسعار التقديرية بالدولار (لكل مليون وحدة للذكاء، ولكل رسالة لرمز الدخول)
@@ -1258,10 +1450,90 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       return json({ ok, to });
     }
 
-    case "logout":
-      await db.from("sessions").delete().eq("staff_id", ctx.staff.id);
-      await db.from("push_subs").delete().eq("staff_id", ctx.staff.id);
+    // الخروج من هذا الجهاز فقط (باقي أجهزته تبقى داخلة)، أو من كل الأجهزة إذا طلب
+    case "logout": {
+      if (b.all === true) {
+        await db.from("sessions").delete().eq("staff_id", ctx.staff.id);
+        await db.from("push_subs").delete().eq("staff_id", ctx.staff.id);
+        return json({ ok: true, all: true });
+      }
+      const raw = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+      await db.from("sessions").delete().eq("token_hash", await sha(raw));
+      if (b.endpoint) await db.from("push_subs").delete().eq("staff_id", ctx.staff.id).eq("endpoint", String(b.endpoint));
       return json({ ok: true });
+    }
+
+    // ===== البصمة: تفعيلها على هذا الجهاز، وقائمة أجهزتي =====
+    case "pk_reg_options": {
+      const rp = await rpFor(req);
+      if (!rp) return json({ error: "البصمة تشتغل من تطبيق مقصد نفسه فقط" }, 400);
+      const challenge = newChallenge();
+      await db.from("auth_challenges").delete().eq("staff_id", ctx.staff.id).eq("kind", "reg");
+      const { data: row } = await db.from("auth_challenges").insert({
+        kind: "reg", staff_id: ctx.staff.id, challenge, rp_id: rp.id,
+        expires_at: new Date(Date.now() + 5 * 60000).toISOString(),
+      }).select("id").single();
+      const { data: mine } = await db.from("passkeys").select("cred_id,rp_id").eq("staff_id", ctx.staff.id);
+      const phone = String(ctx.staff.phone ?? "");
+      return json({
+        cid: row?.id, challenge, timeout: 120000,
+        rp: { id: rp.id, name: "مقصد" },
+        user: { id: wB64(new TextEncoder().encode(ctx.staff.id)), name: phone.startsWith("966") ? "0" + phone.slice(3) : phone,
+                displayName: [ctx.staff.name, ctx.office?.name].filter(Boolean).join(" — ") || "مقصد" },
+        exclude: (mine ?? []).filter((x: any) => x.rp_id === rp.id).map((x: any) => x.cred_id),
+      });
+    }
+
+    case "pk_reg_verify": {
+      const rp = await rpFor(req);
+      if (!rp) return json({ error: "البصمة تشتغل من تطبيق مقصد نفسه فقط" }, 400);
+      const bad = (why: string) => json({ error: "ما قدرنا نفعّل البصمة (" + why + "). جرّب مرة ثانية." }, 400);
+      const { data: ch } = await db.from("auth_challenges").select("*").eq("id", String(b.cid ?? "")).maybeSingle();
+      if (!ch || ch.kind !== "reg" || ch.staff_id !== ctx.staff.id || ch.used_at || new Date(ch.expires_at) < new Date() || ch.rp_id !== rp.id) return bad("انتهت المهلة");
+      await db.from("auth_challenges").update({ used_at: new Date().toISOString() }).eq("id", ch.id);
+      try {
+        if (!clientData(String(b.clientDataJSON ?? ""), "webauthn.create", ch.challenge, rp)) return bad("بيانات الجهاز");
+        const att = cbor(wUnb64(String(b.attestationObject ?? "")))[0] as Map<string, any>;
+        const info = parseAuthData(att.get("authData"));
+        if (!sameBytes(info.rpIdHash, await sha256(new TextEncoder().encode(rp.id)))) return bad("النطاق");
+        if (!(info.flags & 0x01) || !(info.flags & 0x04)) return bad("لازم بصمة أو رمز الجوال");
+        if (!info.credId || !info.cose) return bad("بيانات المفتاح");
+        const credId = wB64(info.credId);
+        if (b.id && String(b.id) !== credId) return bad("المعرّف");
+        const { alg, jwk } = coseToJwk(info.cose);
+        const { error } = await db.from("passkeys").insert({
+          staff_id: ctx.staff.id, cred_id: credId, public_key: jwk, alg, sign_count: info.count, rp_id: rp.id,
+          transports: Array.isArray(b.transports) ? b.transports.map(String).slice(0, 6) : null,
+          label: String(b.label ?? "").slice(0, 40) || null,
+        });
+        if (error) return bad("محفوظة من قبل");
+      } catch { return bad("صيغة غير مدعومة"); }
+      await audit(ctx.staff.phone, true, "passkey_added", req, ctx.staff.id);
+      return json({ ok: true });
+    }
+
+    case "pk_list": {
+      const { data } = await db.from("passkeys").select("id,label,created_at,last_used_at,rp_id")
+        .eq("staff_id", ctx.staff.id).order("created_at");
+      return json({ passkeys: data ?? [] });
+    }
+
+    case "pk_delete": {
+      await db.from("passkeys").delete().eq("id", String(b.id ?? "")).eq("staff_id", ctx.staff.id);
+      await audit(ctx.staff.phone, true, "passkey_removed", req, ctx.staff.id);
+      return json({ ok: true });
+    }
+
+    // رمز دخول لمرة وحدة يصدره مشغّل المنصة لموظف علق (يعطيه له بالتلفون بعد ما يتأكد منه)
+    case "staff_code": {
+      if (!isSuper) return json({ error: "forbidden" }, 403);
+      const { data: t } = await db.from("staff").select("id,name,phone,active").eq("id", String(b.id ?? "")).maybeSingle();
+      if (!t) return json({ error: "الموظف غير موجود" }, 404);
+      if (!t.active) return json({ error: "الموظف موقوف — فعّله أول" }, 400);
+      const code = await issueCode(t.phone, 30);
+      await audit(t.phone, true, "code_issued", req, ctx.staff.id);
+      return json({ ok: true, code, name: t.name, phone: t.phone, minutes: 30 });
+    }
 
     // ===== التنبيهات =====
     // صاحب المكتب يختار القنوات: تيليجرام، الجوال، أو الاثنين (وحدة على الأقل)

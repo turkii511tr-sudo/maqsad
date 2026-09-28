@@ -46,7 +46,7 @@ export function makeDb(seed) {
       const tbl = (T[this.t] ??= []);
       if (this.op === "insert") {
         const arr = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((r) => ({
-          id: r.id ?? (this.t === "customers" ? randomUUID() : seq++),
+          id: r.id ?? (["customers", "login_requests", "auth_challenges", "passkeys"].includes(this.t) ? randomUUID() : seq++),
           created_at: new Date().toISOString(), ...structuredClone(r),
         }));
         tbl.push(...arr);

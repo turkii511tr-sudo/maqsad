@@ -13,7 +13,7 @@ function seed() {
   return {
     app_secrets: [{ key: "WEBHOOK_SECRET", value: "wk" }, { key: "TELEGRAM_BOT_TOKEN", value: "1:abc" }],
     offices: [
-      { id: "o1", name: "مكتب الأفق", code: "UFQ", license_no: "1100", wa_provider: "cloud", wa_instance: "111", wa_token: "EAA", active: true, msg_quota: 15 },
+      { id: "o1", name: "مكتب الأفق", code: "UFQ", license_no: "1100", wa_provider: "cloud", wa_instance: "111", wa_token: "EAA", wa_number: "966511111111", active: true, msg_quota: 15 },
       { id: "o2", name: "مكتب موقوف", code: "OFF", license_no: "2200", wa_provider: "cloud", wa_instance: "222", wa_token: "EAB", active: false, msg_quota: 15 },
     ],
     staff: [
@@ -39,33 +39,45 @@ async function boot(mut) {
 }
 const graph = (f) => f.calls.filter((c) => c.url.includes("graph.facebook.com"));
 
-await test("طلب الرمز بلا قالب المنصة: من رقم المكتب، بلا اسم الموظف", async () => {
-  const { f, h } = await boot();
-  const r = await call(h, { action: "request_otp", phone: "0500000002" });
-  assert.equal(r.status, 200); assert.equal(r.body.delivered, true);
+await test("v15 بداية الدخول بلا رقم المنصة: الرسالة لرقم المكتب، بلا اسم الموظف، وما يُرسل شي", async () => {
+  const { T, f, h } = await boot();
+  const r = await call(h, { action: "login_start", phone: "0500000002", device: "آيفون" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.wa, "966511111111");
+  assert.match(r.body.text, /^دخول مقصد [٠-٩]{4}$/);
   assert.equal(r.body.name, undefined, "name leaked");
-  const g = graph(f); assert.equal(g.length, 1);
-  assert.ok(g[0].url.includes("/111/messages") && g[0].body.type === "text" && /رمز الدخول/.test(g[0].body.text.body));
+  assert.equal(f.calls.length, 0, "nothing should be sent");
+  const lr = T.login_requests[0];
+  assert.equal(lr.channel, "office"); assert.equal(lr.channel_office, "o1"); assert.equal(lr.device, "آيفون");
+  assert.notEqual(lr.poll_hash, r.body.poll, "poll stored in clear");
 });
 
-await test("طلب الرمز بقالب المنصة: قالب مصادقة من رقم المنصة", async () => {
+await test("v15 بداية الدخول مع رقم المنصة: الرسالة لرقم المنصة", async () => {
   const { T, f, h } = await boot((d) => d.app_secrets.push(
-    { key: "PLATFORM_WA_PHONE_ID", value: "999" }, { key: "PLATFORM_WA_TOKEN", value: "EAP" }, { key: "OTP_TEMPLATE", value: "maqsad_login" }));
-  const r = await call(h, { action: "request_otp", phone: "966500000001" });
+    { key: "PLATFORM_WA_PHONE_ID", value: "999" }, { key: "PLATFORM_WA_TOKEN", value: "EAP" }, { key: "PLATFORM_WA_NUMBER", value: "966599999999" }));
+  const r = await call(h, { action: "login_start", phone: "966500000001" });
   assert.equal(r.status, 200);
-  const g = graph(f); assert.equal(g.length, 1);
-  const b = g[0].body;
-  assert.ok(g[0].url.includes("/999/messages"), g[0].url);
-  assert.equal(b.type, "template"); assert.equal(b.template.name, "maqsad_login"); assert.equal(b.template.language.code, "ar");
-  const code = b.template.components[0].parameters[0].text;
-  assert.match(code, /^\d{6}$/);
-  assert.equal(b.template.components[1].parameters[0].text, code);
-  assert.equal(T.otps[0].code_hash, H(code), "stored hash mismatch");
+  assert.equal(r.body.wa, "966599999999");
+  assert.equal(T.login_requests[0].channel, "platform");
+  assert.equal(f.calls.length, 0);
+});
+
+await test("v15 رقم غير مسجّل، ومكتب بلا واتساب مربوط", async () => {
+  const { h } = await boot((d) => { d.offices[0].wa_token = null; });
+  assert.equal((await call(h, { action: "login_start", phone: "0555555555" })).body.error, "not_registered");
+  const r = await call(h, { action: "login_start", phone: "0500000009" });
+  assert.equal(r.status, 409); assert.equal(r.body.error, "no_channel"); assert.equal(r.body.super, undefined, "admin phone leaked");
+});
+
+await test("v15 إرسال الرموز القديم أُلغي", async () => {
+  const { f, h } = await boot();
+  const r = await call(h, { action: "request_otp", phone: "0500000002" });
+  assert.equal(r.status, 410); assert.equal(f.calls.length, 0);
 });
 
 await test("مكتب موقوف: لا رمز دخول ولا جلسة لموظفيه", async () => {
   const { h } = await boot();
-  const r = await call(h, { action: "request_otp", phone: "966500000003" });
+  const r = await call(h, { action: "login_start", phone: "966500000003" });
   assert.equal(r.status, 403);
   const b = await call(h, { action: "bootstrap" }, "s3");
   assert.equal(b.status, 401);
@@ -116,7 +128,7 @@ await test("رابط ميتا مثبّت على فرانكفورت، وحالة 
   const { h } = await boot();
   const r = await call(h, { action: "settings_status" }, "sa");
   assert.ok(r.body.meta_webhook.endsWith("/wa-webhook?forceFunctionRegion=eu-central-1"), r.body.meta_webhook);
-  assert.equal(r.body.otp_platform, false);
+  assert.equal(r.body.login_platform, false);
   const o = await call(h, { action: "settings_status" }, "s1");
   assert.equal(o.body.meta_webhook, undefined);
 });
@@ -124,10 +136,10 @@ await test("رابط ميتا مثبّت على فرانكفورت، وحالة 
 await test("الرقم بأي صيغة: ٠٥… و5… و00966… كلها تُفهم", async () => {
   const { T, h } = await boot();
   for (const [i, ph] of [["1", "٠٥٠٠٠٠٠٠٠١"], ["2", "500000002"], ["9", "00966500000009"]].entries()) {
-    const r = await call(h, { action: "request_otp", phone: ph[1] });
+    const r = await call(h, { action: "login_start", phone: ph[1] });
     assert.equal(r.status, 200, ph[1] + " → " + r.status);
   }
-  assert.equal(T.otps.length, 3);
+  assert.equal(T.login_requests.length, 3);
 });
 
 await test("مفاتيح قالب الدخول يحفظها المشغّل فقط", async () => {
@@ -239,14 +251,13 @@ await test("الأسعار التقديرية يعدّلها المشغّل فق
   assert.equal(v.PRICE_AI_IN, "0.2"); assert.equal(v.PRICE_OTP, "0.02"); assert.match(v.PRICES_UPDATED, /^\d{4}-\d{2}-\d{2}$/);
 });
 
-await test("رموز الدخول تُعدّ في استهلاك المكتب", async () => {
-  const { T, h } = await boot((d) => d.app_secrets.push(
-    { key: "PLATFORM_WA_PHONE_ID", value: "999" }, { key: "PLATFORM_WA_TOKEN", value: "EAP" }, { key: "OTP_TEMPLATE", value: "maqsad_login" }));
-  await call(h, { action: "request_otp", phone: "966500000001" });
-  assert.deepEqual(T.__usage.at(-1), { p_office: "o1", p_otp_platform: 1 });
-  const { T: T2, h: h2 } = await boot();
-  await call(h2, { action: "request_otp", phone: "966500000002" });
-  assert.deepEqual(T2.__usage.at(-1), { p_office: "o1", p_otp_office: 1 });
+await test("v15 رقم المنصة يحفظه المشغّل ويُفحص", async () => {
+  const { T, h } = await boot();
+  assert.equal((await call(h, { action: "save_settings", settings: { platform_wa_number: "0599999999" } }, "s1")).status, 403);
+  assert.equal((await call(h, { action: "save_settings", settings: { platform_wa_number: "0599" } }, "sa")).status, 400);
+  const s = await call(h, { action: "save_settings", settings: { platform_wa_number: "0599999999" } }, "sa");
+  assert.equal(s.status, 200);
+  assert.equal(T.app_secrets.find((x) => x.key === "PLATFORM_WA_NUMBER").value, "966599999999");
 });
 
 await test("حالة العقار: مؤجّر ومباع ومحجوز تُحفظ، وأي قيمة ثانية ترجع «متاح»", async () => {
@@ -328,11 +339,12 @@ await test("موظف سجّل نتيجة اتصال أو له دخول ناجح 
   assert.equal(T.staff.length, 4);
 });
 
-await test("الدخول بالرمز يسجّل وقت آخر دخول، وقائمة الموظفين تعرضه", async () => {
+await test("v15 رمز المدير لمرة وحدة يدخّل الموظف ويسجّل وقت آخر دخول، وقائمة الموظفين تعرضه", async () => {
   const { T, f, h } = await boot();
-  await call(h, { action: "request_otp", phone: "0500000002" });
-  const code = /(\d{6})/.exec(graph(f)[0].body.text.body)[1];
-  const v = await call(h, { action: "verify_otp", phone: "0500000002", code });
+  const c = await call(h, { action: "staff_code", id: "s2" }, "sa");
+  assert.equal(c.status, 200); assert.match(c.body.code, /^\d{6}$/);
+  assert.equal(f.calls.length, 0, "code is handed over by phone, not sent");
+  const v = await call(h, { action: "verify_otp", phone: "0500000002", code: c.body.code });
   assert.equal(v.status, 200);
   assert.ok(T.staff.find((x) => x.id === "s2").last_login_at, "last_login_at not set");
   const l = await call(h, { action: "staff_list" }, "sa");
@@ -563,7 +575,7 @@ await test("إشعارات الجوال: تفعيل الجهاز، رفض الع
   assert.equal((await call(h, { action: "push_test", endpoint: DEV.endpoint }, "s1")).status, 404, "جوال غيره");
   const st = await call(h, { action: "settings_status" }, "s2");
   assert.equal(st.body.notify.devices, 1); assert.equal(st.body.notify.my_devices, 1);
-  await call(h, { action: "logout" }, "s2");
+  await call(h, { action: "logout", endpoint: DEV.endpoint }, "s2");
   assert.equal(T.push_subs.length, 0, "جهاز الموظف بقي بعد خروجه");
 });
 
@@ -583,14 +595,14 @@ await test("v13: جلسة المدير تنتهي بعد ٧ أيام من إنش
   assert.equal((await call(h, { action: "me" }, "s1")).status, 200);
 });
 
-await test("v13: دخول المدير الجديد مدته ٧ أيام، والموظف ٣٠", async () => {
+await test("v15: دخول المدير مدته ٧ أيام، والموظف ٩٠", async () => {
   const { T, h } = await boot((d) => { d.otps = [{ phone: "966500000009", code_hash: H("123456"),
     expires_at: future, attempts: 0 }, { phone: "966500000001", code_hash: H("654321"), expires_at: future, attempts: 0 }]; });
   const a = await call(h, { action: "verify_otp", phone: "0500000009", code: "123456" });
   const b = await call(h, { action: "verify_otp", phone: "0500000001", code: "654321" });
   assert.equal(a.status, 200, JSON.stringify(a.body)); assert.equal(b.status, 200);
   const days = (id) => Math.round((new Date(T.sessions.filter((x) => x.staff_id === id).at(-1).expires_at) - Date.now()) / 864e5);
-  assert.equal(days("sa"), 7); assert.equal(days("s1"), 30);
+  assert.equal(days("sa"), 7); assert.equal(days("s1"), 90);
 });
 
 await test("v13: تعديل المدير يُسجّل (أسماء الحقول بلا قيم)، وتعديل المكتب لنفسه لا", async () => {

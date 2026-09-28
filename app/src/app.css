@@ -618,3 +618,38 @@ h4.sub{font-size:15.5px;font-weight:600;margin:0 0 var(--s3)}
 .pm-row .main .s{flex-basis:100%;color:var(--ink-3);font-size:14px}
 .pm-row .btnrow .btn{min-width:0}
 .pm-row a.btn{text-decoration:none}
+
+/* v15: الدخول — البصمة، رسالة واتساب يرسلها الموظف، ورمز احتياطي */
+.btn svg{flex:none}
+.btn.pk-btn svg,.btn.wa svg,.btn.wa-ghost svg{width:20px;height:20px}
+.btn.wa-ghost{color:var(--ink)}
+.auth-or{display:flex;align-items:center;gap:var(--s3);margin:var(--s4) 0 var(--s3);color:var(--ink-3);font-size:14px}
+.auth-or::before,.auth-or::after{content:"";flex:1;height:1px;background:var(--line)}
+.auth-hint{text-align:center;margin-top:10px}
+.auth-link{display:block;width:100%;margin-top:var(--s3);padding:6px;background:none;border:0;color:var(--brand-ink);
+  font:inherit;font-size:15px;text-decoration:underline;text-underline-offset:4px;cursor:pointer}
+.auth-link.on-dark{color:var(--c-mist-2);margin-top:var(--s4)}
+.auth-link:focus-visible{outline:2px solid var(--c-amber);outline-offset:2px}
+a.btn{text-decoration:none}
+.wait-t{font-family:var(--f-display);font-weight:600;font-size:16px;text-align:center;margin:0 0 var(--s3)}
+.wait-msg{direction:rtl;text-align:center;font-family:var(--f-display);font-size:24px;font-weight:700;letter-spacing:.5px;
+  padding:var(--s4);margin-bottom:var(--s4);border:2px dashed var(--line);border-radius:var(--r);background:var(--sunk)}
+.wait-state{display:flex;align-items:center;justify-content:center;gap:10px;margin:var(--s4) 0 var(--s3);color:var(--ink-2);font-size:15px;text-align:center}
+.wait-state.off .spin{display:none}
+.wait-state.off{color:var(--danger)}
+.spin{width:16px;height:16px;flex:none;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--c-amber);animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}}
+.pk-offer{text-align:center;margin-bottom:var(--s4)}
+.pk-offer b{display:block;font-family:var(--f-display);font-size:18px;margin:var(--s3) 0 6px}
+.pk-offer p{margin:0;color:var(--ink-2);line-height:1.7}
+.pk-ic{width:64px;height:64px;margin:0 auto;border-radius:50%;display:grid;place-items:center;background:var(--brand-wash);color:var(--ink)}
+.pk-ic svg{width:34px;height:34px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round}
+.pk-card{margin-top:var(--s3)}
+.pk-card .sub{margin:0 0 4px}
+.pk-list{display:grid;gap:var(--s2);margin-top:var(--s3)}
+.pk-row{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);padding:var(--s3);border:1px solid var(--line);border-radius:var(--r-sm)}
+.pk-row b{display:block;font-family:var(--f-display);font-size:15px}
+.pk-row .s{display:block;color:var(--ink-3);font-size:14px}
+.code-big{direction:ltr;text-align:center;font-family:var(--f-display);font-size:40px;font-weight:700;letter-spacing:.3em;
+  padding:var(--s4);margin:var(--s4) 0;border-radius:var(--r);background:var(--sunk)}

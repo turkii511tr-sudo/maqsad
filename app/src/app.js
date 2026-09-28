@@ -182,12 +182,14 @@ function hDate(d) {
 function riyadhDay() { return new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10); }
 
 /* ---------- الاتصال بالخادم ---------- */
-var NO_OID = ["request_otp", "verify_otp", "redeem", "ping",
+var NO_OID = ["verify_otp", "redeem", "ping", "login_start", "login_poll", "admin_tg_code",
+              "pk_login_options", "pk_login_verify", "pk_reg_options", "pk_reg_verify", "pk_list", "pk_delete", "staff_code",
               "offices_list", "office_save", "backups_status",
               "signup_list", "signup_update",
               "fal_get", "fal_verify", "fal_reject", "fal_proof",
               "admin_log", "platform_save", "signup_proof", "fal_request_close"];
 
+var PUBLIC_ACTIONS = ["verify_otp", "redeem", "login_start", "login_poll", "pk_login_options", "pk_login_verify", "admin_tg_code"];
 function call(body, retried) {
   if (S.curOffice && NO_OID.indexOf(body.action) === -1) body.office_id = S.curOffice;
 
@@ -210,6 +212,8 @@ function call(body, retried) {
   return fetch(API, { method: "POST", headers: headers, body: JSON.stringify(body) })
     .then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
+        // نداءات الدخول نفسها: 401 = فشل التحقق، مو انتهاء جلسة
+        if (r.status === 401 && PUBLIC_ACTIONS.indexOf(body.action) > -1) throw new Error(j.error || "تعذّر الدخول");
         if (r.status === 401) {
           if (!retried) {
             return new Promise(function (res) { setTimeout(res, 700); })
@@ -245,39 +249,215 @@ function skeleton(n) {
 /* ==========================================================================
    الدخول
    ========================================================================== */
-var resendTimer = null;
+// ثلاث طرق: البصمة (بلا رقم) · رسالة واتساب يرسلها الموظف بنفسه (مجانية) · رمز لمرة وحدة من فريق مقصد
+var PK_KEY = "maqsad_pk", PK_SKIP = "maqsad_pk_skip";
+var LG = { id: null, poll: null, timer: null, until: 0, busy: false };
 
-function startResend() {
-  var b = $("#btnResend"), n = 45;
-  b.disabled = true; b.textContent = "إعادة الإرسال بعد " + n + " ثانية";
-  clearInterval(resendTimer);
-  resendTimer = setInterval(function () {
-    n--;
-    if (n <= 0) { clearInterval(resendTimer); b.disabled = false; b.textContent = "أرسل الرمز مرة أخرى"; }
-    else b.textContent = "إعادة الإرسال بعد " + n + " ثانية";
-  }, 1000);
+function pkLsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function pkLsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+
+function pkSupported() {
+  return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create && window.isSecureContext);
+}
+function deviceLabel() {
+  var u = navigator.userAgent || "";
+  return /iPhone/.test(u) ? "آيفون" : /iPad/.test(u) ? "آيباد" : /Android/.test(u) ? "أندرويد"
+    : /Macintosh/.test(u) ? "ماك" : /Windows/.test(u) ? "ويندوز" : "جهاز";
+}
+function b64uToBuf(s) {
+  s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  var bin = atob(s), out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+function bufToB64u(b) {
+  var a = new Uint8Array(b), s = "";
+  for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function requestCode(btn) {
+function authPanel(id) {
+  ["authPhone", "authWait", "authCode", "authPk"].forEach(function (x) { $("#" + x).hidden = x !== id; });
+  $("#btnHaveCode").hidden = id !== "authPhone";
+}
+function paintAuthPhone() {
+  var can = pkSupported(), mine = pkLsGet(PK_KEY) === "1";
+  $("#btnPk").hidden = !(can && mine);
+  $("#pkOr").hidden = !(can && mine);
+  $("#btnPkLink").hidden = !(can && !mine);
+  $("#btnWa").className = "btn " + (can && mine ? "ghost wa-ghost" : "wa");
+}
+function stopLoginWait() { clearInterval(LG.timer); LG.timer = null; LG.id = null; LG.poll = null; }
+
+function saveToken(tok) {
+  S.token = tok;
+  try { localStorage.setItem(TOKEN_KEY, S.token); } catch (e) {}
+}
+// بعد الدخول برسالة أو رمز: نعرض تفعيل البصمة مرة (إلا إذا أجّلها خلال آخر ٣٠ يوم)
+function afterLogin(r, method) {
+  saveToken(r.token);
+  stopLoginWait();
+  var skipped = Number(pkLsGet(PK_SKIP) || 0);
+  if (method !== "passkey" && pkSupported() && pkLsGet(PK_KEY) !== "1" && Date.now() - skipped > 30 * 864e5) {
+    note("#authMsg", "", ""); authPanel("authPk");
+    return Promise.resolve();
+  }
+  return load();
+}
+
+function loginErr(e) {
+  var m = e.message;
+  return m === "not_registered" ? "هذا الرقم غير مسجّل في مقصد. تأكد من الرقم، أو اطلب من صاحب المكتب يضيفك."
+    : m === "no_channel" ? "الدخول بالواتساب مو متاح لحسابك حالياً (واتساب مكتبك غير مربوط). اطلب رمز دخول من فريق مقصد."
+    : m;
+}
+
+function startWaLogin(btn) {
+  if (!$("#ph").value.trim()) { note("#authMsg", "اكتب رقم جوالك أول", "err"); $("#ph").focus(); return; }
   btn.disabled = true; note("#authMsg", "", "");
-  return call({ action: "request_otp", phone: $("#ph").value })
+  call({ action: "login_start", phone: $("#ph").value, device: deviceLabel() })
     .then(function (r) {
-      if (r.delivered === false) {
-        note("#authMsg", "تعذّر إرسال الرمز على واتساب — الربط معطّل حالياً. راجع مشغّل المنصة.", "err");
-        btn.disabled = false; return false;
-      }
-      $("#authPhone").hidden = true; $("#authCode").hidden = false; $("#cd").focus();
-      note("#authMsg", "الرمز في طريقه إلى واتساب — افتح الرسالة وانسخه هنا", "ok");
-      startResend();
-      return true;
+      LG.id = r.id; LG.poll = r.poll; LG.until = Date.now() + (r.ttl || 300) * 1000;
+      $("#waText").textContent = r.text;
+      $("#btnOpenWa").href = "https://wa.me/" + r.wa + "?text=" + encodeURIComponent(r.text);
+      $("#waTo").innerHTML = 'ترسلها لرقم مقصد <bdi class="ltr num">' + esc(fmtPhone(r.wa)) + "</bdi> من نفس جوالك اللي كتبت رقمه";
+      $("#waitLbl").textContent = "بانتظار رسالتك… ارجع هنا بعد ما ترسلها";
+      $("#waitState").className = "wait-state";
+      authPanel("authWait");
+      clearInterval(LG.timer);
+      LG.timer = setInterval(pollLogin, 2000);
     })
+    .catch(function (e) { note("#authMsg", loginErr(e), "err"); })
+    .then(function () { btn.disabled = false; });
+}
+
+function waitEnded(text) {
+  stopLoginWait();
+  $("#waitLbl").textContent = text;
+  $("#waitState").className = "wait-state off";
+}
+function pollLogin() {
+  if (!LG.id || LG.busy) return;
+  if (Date.now() > LG.until + 15000) { waitEnded("انتهت المدة (٥ دقائق). ارجع وابدأ من جديد."); return; }
+  LG.busy = true;
+  call({ action: "login_poll", id: LG.id, poll: LG.poll })
+    .then(function (r) {
+      if (r.token) return afterLogin(r, "whatsapp");
+      if (r.state === "expired") waitEnded("انتهت المدة (٥ دقائق). ارجع وابدأ من جديد.");
+      else if (r.state === "used") waitEnded("هذا الطلب استُخدم. ارجع وابدأ من جديد.");
+    })
+    .catch(function () { /* نعيد المحاولة في الدورة الجاية */ })
+    .then(function () { LG.busy = false; });
+}
+
+function pkLogin(btn) {
+  if (!pkSupported()) return;
+  btn.disabled = true; note("#authMsg", "", "");
+  call({ action: "pk_login_options" })
+    .then(function (o) {
+      return navigator.credentials.get({ publicKey: {
+        challenge: b64uToBuf(o.challenge), rpId: o.rpId, timeout: o.timeout, userVerification: "required", allowCredentials: [],
+      } }).then(function (c) {
+        var r = c.response;
+        return call({ action: "pk_login_verify", cid: o.cid, id: bufToB64u(c.rawId),
+          clientDataJSON: bufToB64u(r.clientDataJSON), authenticatorData: bufToB64u(r.authenticatorData),
+          signature: bufToB64u(r.signature), userHandle: r.userHandle ? bufToB64u(r.userHandle) : null });
+      });
+    })
+    .then(function (r) { pkLsSet(PK_KEY, "1"); return afterLogin(r, "passkey"); })
     .catch(function (e) {
-      var m = e.message === "not_registered" ? "هذا الرقم غير مسجل. راجع مدير المكتب."
-        : e.message === "too_soon" ? "انتظر قليلاً قبل طلب رمز جديد." : e.message;
-      note("#authMsg", m, "err");
-      btn.disabled = false;
-      return false;
+      if (e && e.name === "NotAllowedError") note("#authMsg", "ما تمت البصمة. جرّب مرة ثانية، أو ادخل عن طريق واتساب.", "err");
+      else note("#authMsg", (e && e.message) || "تعذّر الدخول بالبصمة", "err");
+    })
+    .then(function () { btn.disabled = false; });
+}
+
+// تفعيل البصمة على هذا الجهاز (بعد الدخول)
+function pkEnroll() {
+  return call({ action: "pk_reg_options" }).then(function (o) {
+    return navigator.credentials.create({ publicKey: {
+      challenge: b64uToBuf(o.challenge), rp: o.rp,
+      user: { id: b64uToBuf(o.user.id), name: o.user.name, displayName: o.user.displayName },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "required", requireResidentKey: true, userVerification: "required" },
+      attestation: "none", timeout: o.timeout,
+      excludeCredentials: (o.exclude || []).map(function (id) { return { type: "public-key", id: b64uToBuf(id) }; }),
+    } }).then(function (c) {
+      var r = c.response;
+      return call({ action: "pk_reg_verify", cid: o.cid, id: bufToB64u(c.rawId),
+        clientDataJSON: bufToB64u(r.clientDataJSON), attestationObject: bufToB64u(r.attestationObject),
+        transports: r.getTransports ? r.getTransports() : null, label: deviceLabel() });
     });
+  }).then(function () { pkLsSet(PK_KEY, "1"); pkLsSet(PK_SKIP, null); });
+}
+function pkErr(e) {
+  return e && e.name === "InvalidStateError" ? "البصمة مفعّلة على هذا الجهاز من قبل."
+    : e && e.name === "NotAllowedError" ? "ما تمت البصمة — جرّب مرة ثانية."
+    : (e && e.message) || "تعذّر تفعيل البصمة";
+}
+
+// «الدخول بالبصمة» في الإعدادات: أجهزتي، تفعيل هذا الجهاز، والخروج من كل الأجهزة
+function renderPk() {
+  var hosts = ["#pkBox", "#pkBox2"].map(function (h) { return $(h); }).filter(Boolean);
+  if (!hosts.length || !S.token) return;
+  call({ action: "pk_list" }).then(function (r) {
+    var list = r.passkeys || [];
+    var mine = pkLsGet(PK_KEY) === "1";
+    var h = '<h4 class="sub">الدخول بالبصمة</h4>' +
+      '<p class="hint tight">الأجهزة اللي تقدر تدخل منها ببصمتك بدون رسالة واتساب.</p>' +
+      (list.length ? '<div class="pk-list">' + list.map(function (k) {
+        return '<div class="pk-row"><div><b>' + esc(k.label || "جهاز") + "</b>" +
+          '<span class="s">أُضيف ' + esc(ago(k.created_at)) + (k.last_used_at ? " · آخر دخول " + esc(ago(k.last_used_at)) : "") + "</span></div>" +
+          '<button class="btn ghost sm danger" type="button" data-pkdel="' + esc(k.id) + '">حذف</button></div>';
+      }).join("") + "</div>" : '<p class="hint">ما فيه أجهزة مفعّلة بعد.</p>') +
+      '<div class="btnrow" style="margin-top:12px">' +
+        (pkSupported() && !mine ? '<button class="btn" type="button" data-pkadd="1">فعّل البصمة على هذا الجهاز</button>' : "") +
+        '<button class="btn ghost" type="button" data-pkall="1">خروج من كل الأجهزة</button>' +
+      "</div><div data-pkmsg></div>";
+    hosts.forEach(function (host) {
+      host.innerHTML = h;
+      var msg = host.querySelector("[data-pkmsg]");
+      var say = function (t, k) { msg.innerHTML = t ? '<div class="msg ' + k + '"><span>' + esc(t) + "</span></div>" : ""; };
+      var add = host.querySelector("[data-pkadd]");
+      if (add) add.onclick = function () {
+        add.disabled = true; say("", "");
+        pkEnroll().then(function () { renderPk(); }).catch(function (e) { say(pkErr(e), "err"); add.disabled = false; });
+      };
+      host.querySelector("[data-pkall]").onclick = function () {
+        if (!confirm("تطلع من مقصد في كل أجهزتك (وهذا الجهاز معها)؟ ترجع برسالة واتساب أو ببصمتك.")) return;
+        call({ action: "logout", all: true }).catch(function () {}).then(logout);
+      };
+      var dels = host.querySelectorAll("[data-pkdel]");
+      for (var i = 0; i < dels.length; i++) {
+        (function (b) {
+          b.onclick = function () {
+            if (!confirm("تحذف هذا الجهاز من الدخول بالبصمة؟")) return;
+            b.disabled = true;
+            call({ action: "pk_delete", id: b.dataset.pkdel }).then(function () {
+              // إذا حذف كل الأجهزة، نشيل علامة «هذا الجهاز مفعّل»
+              if (list.length === 1) pkLsSet(PK_KEY, null);
+              renderPk();
+            }).catch(function (e) { say(e.message, "err"); b.disabled = false; });
+          };
+        })(dels[i]);
+      }
+    });
+  }).catch(function () { /* القسم اختياري */ });
+}
+
+// رمز دخول لمرة وحدة لموظف علق (مشغّل المنصة فقط): يعطيه له بالتلفون بعد ما يتأكد منه
+function issueStaffCode(st, btn) {
+  if (!confirm("تصدر رمز دخول لمرة وحدة لـ«" + st.name + "»؟\nأعطه الرمز بنفسك بعد ما تتأكد إنه هو (مكالمة من رقمه).")) return;
+  btn.disabled = true;
+  call({ action: "staff_code", id: st.id }).then(function (r) {
+    openSheet("رمز دخول لـ" + r.name,
+      '<p class="hint tight">صالح ' + r.minutes + ' دقيقة ولمرة وحدة. يفتح التطبيق، يكتب رقمه <bdi class="ltr num">' + esc(fmtPhone(r.phone)) +
+        '</bdi>، ويضغط «عندي رمز دخول من فريق مقصد».</p>' +
+      '<div class="code-big num">' + esc(r.code) + "</div>" +
+      '<button class="btn" id="codeDone" type="button">تم</button>');
+    $("#codeDone").onclick = closeSheet;
+  }).catch(function (e) { alert(e.message); }).then(function () { btn.disabled = false; });
 }
 
 function logout() {
@@ -286,9 +466,10 @@ function logout() {
   clearTimeout(NT.tgPoll); NT.tgPoll = null;
   S.token = ""; S.me = null; S.booted = false; S.pre = null;
   try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
-  clearInterval(resendTimer);
+  stopLoginWait();
   $("#app").hidden = true; $("#auth").hidden = false;
-  $("#authPhone").hidden = false; $("#authCode").hidden = true;
+  note("#authMsg", "", "");
+  paintAuthPhone(); authPanel("authPhone");
 }
 
 /* ==========================================================================
@@ -347,6 +528,7 @@ function load() {
       show("s-today");
       if (termsPending()) openTerms(maybeOnboard); else maybeOnboard();
     }
+    renderPk();
     S.booted = true;
     // الجهاز مفعّل من قبل (بعد خروج ودخول مثلاً): نعيد تسجيله بصمت
     ntProbe().then(function () {
@@ -1353,7 +1535,7 @@ function renderHome() {
     dot(ps.openai, "فهم الرسائل", MODEL_AR[ps.ai_model] || ps.ai_model || "جاهز") +
     dot(ps.telegram, "تيليجرام") +
     dot(ps.meta, "واتساب الرسمي (ميتا)", "مربوط", "غير مربوط") +
-    dot(ps.otp_platform, "رموز الدخول من رقم المنصة", "جاهزة", "من رقم المكتب");
+    dot(ps.login_platform, "الدخول عبر رقم المنصة", "جاهز", "عبر رقم المكتب");
 }
 
 function renderPlatform() {
@@ -1369,9 +1551,9 @@ function renderPlatform() {
   $("#kMetaVerify").value = "";
   $("#kMetaVerify").placeholder = s.meta ? "محفوظ ✓ (اتركه فارغاً لعدم التغيير)" : "اختر أي كلمة سرية";
   $("#kHook").value = s.meta_webhook || "";
-  mark("#kPlatTok", s.otp_platform);
+  mark("#kPlatTok", s.platform_token);
   $("#kPlatId").value = s.platform_phone_id || "";
-  $("#kOtpTpl").value = s.otp_template || "";
+  $("#kPlatNum").value = s.platform_number ? fmtPhone(s.platform_number) : "";
 }
 
 function saveAi(b) {
@@ -1391,7 +1573,7 @@ var FIELD_AR = {
   title: "اسم العقار", price: "السعر", district: "الحي", rooms: "الغرف", state: "الحالة", deal_type: "نوع الطلب",
   property_type: "نوع العقار", ad_license_no: "ترخيص الإعلان", ad_license_expiry: "انتهاء الترخيص",
   openai_key: "مفتاح OpenAI", telegram_token: "توكن البوت", meta_app_secret: "مفتاح ميتا", meta_verify_token: "رمز تحقق ميتا",
-  platform_wa_phone_id: "رقم المنصة", platform_wa_token: "توكن رقم المنصة", otp_template: "قالب الدخول",
+  platform_wa_phone_id: "معرّف رقم المنصة", platform_wa_token: "توكن رقم المنصة", platform_wa_number: "رقم المنصة", otp_template: "قالب الدخول",
   price_ai_in: "الأسعار", price_ai_cached: "الأسعار", price_ai_out: "الأسعار", price_otp: "الأسعار", my_phone: "رقمي",
 };
 
@@ -1892,6 +2074,7 @@ function staffPanel(o) {
         : '<span class="s">آخر دخول ' + esc(ago(s.last_login_at)) + "</span>";
       var btns = s.role === "super_admin" ? "" :
         '<div class="end">' +
+          (S.isSuper && s.active ? '<button class="btn ghost sm" type="button" data-code="' + esc(s.id) + '">رمز دخول</button>' : "") +
           '<button class="btn ghost sm" type="button" data-edit="' + esc(s.id) + '">تعديل</button>' +
           (never
             ? '<button class="btn ghost sm danger" type="button" data-del="' + esc(s.id) + '">حذف</button>'
@@ -1907,6 +2090,8 @@ function staffPanel(o) {
       var bE = h.querySelector('[data-edit="' + s.id + '"]');
       var bD = h.querySelector('[data-del="' + s.id + '"]');
       var bA = h.querySelector('[data-act="' + s.id + '"]');
+      var bC = h.querySelector('[data-code="' + s.id + '"]');
+      if (bC) bC.onclick = function () { issueStaffCode(s, bC); };
       if (bE) bE.onclick = function () { form(s); $("#staffForm").scrollIntoView({ behavior: "smooth", block: "center" }); };
       if (bD) bD.onclick = function () {
         if (!confirm("حذف «" + s.name + "» (" + fmtPhone(s.phone) + ")؟\nما دخل التطبيق ولا مرة، فالحذف ما يأثر على أي بيانات.")) return;
@@ -2234,7 +2419,7 @@ function renderSettings() {
     dot(s.whatsapp, "إرسال واتساب") +
     (S.isSuper ? dot(s.telegram, "تنبيهات تيليجرام") : "") +
     (S.isSuper ? dot(s.meta, "واتساب الرسمي (ميتا)", "غير مربوط") : "") +
-    (S.isSuper ? dot(s.otp_platform, "رموز الدخول (قالب ميتا)", "غير مضبوط") : "") +
+    (S.isSuper ? dot(s.login_platform, "الدخول عبر رقم المنصة", "جاهز", "عبر رقم المكتب") : "") +
     dot(!!s.my_phone, "رقمك للدخول") +
     "</dl>" +
     ((s.errors && s.errors.length)
@@ -2339,30 +2524,48 @@ function syncChips(host, val) {
    الربط
    ========================================================================== */
 function bind() {
-  $("#btnSend").onclick = function () { requestCode(this); };
-  $("#btnResend").onclick = function () { requestCode(this); };
-  $("#ph").onkeydown = function (e) { if (e.key === "Enter") $("#btnSend").click(); };
+  paintAuthPhone();
+  $("#btnWa").onclick = function () { startWaLogin(this); };
+  $("#ph").onkeydown = function (e) { if (e.key === "Enter") $("#btnWa").click(); };
+  $("#btnPk").onclick = function () { pkLogin(this); };
+  $("#btnPkLink").onclick = function () { pkLogin(this); };
+  $("#btnWaBack").onclick = function () { stopLoginWait(); note("#authMsg", "", ""); authPanel("authPhone"); };
+  $("#btnOpenWa").onclick = function () { setTimeout(pollLogin, 3000); };
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && LG.id) pollLogin(); });
+  $("#btnHaveCode").onclick = function () { note("#authMsg", "", ""); authPanel("authCode"); $("#cd").focus(); };
+  $("#btnBack").onclick = function () { note("#authMsg", "", ""); authPanel("authPhone"); };
   $("#cd").onkeydown = function (e) { if (e.key === "Enter") $("#btnVerify").click(); };
-  $("#btnBack").onclick = function () {
-    clearInterval(resendTimer);
-    $("#authCode").hidden = true; $("#authPhone").hidden = false; note("#authMsg", "", "");
-  };
   $("#btnVerify").onclick = function () {
-    var b = this; b.disabled = true; note("#authMsg", "", "");
+    var b = this;
+    if (!$("#ph").value.trim()) { authPanel("authPhone"); note("#authMsg", "اكتب رقم جوالك أول، وبعدها اضغط «عندي رمز»", "err"); return; }
+    b.disabled = true; note("#authMsg", "", "");
     call({ action: "verify_otp", phone: $("#ph").value, code: $("#cd").value })
-      .then(function (r) {
-        S.token = r.token;
-        try { localStorage.setItem(TOKEN_KEY, S.token); } catch (e) {}
-        return load();
-      })
+      .then(function (r) { return afterLogin(r, "code"); })
       .catch(function (e) {
         var m = e.message === "wrong_code" ? "الرمز غير صحيح، تأكد وحاول مرة أخرى."
           : e.message === "expired" ? "انتهت صلاحية الرمز، اطلب رمزاً جديداً."
+          : e.message === "no_code" ? "ما فيه رمز لهذا الرقم. تأكد من الرقم، أو اطلب رمز من فريق مقصد."
           : e.message === "too_many" ? "محاولات كثيرة، اطلب رمزاً جديداً." : e.message;
         note("#authMsg", m, "err");
-        b.disabled = false;
-      });
+      })
+      .then(function () { b.disabled = false; });
   };
+  $("#btnTgCode").onclick = function () {
+    var b = this;
+    if (!$("#ph").value.trim()) { authPanel("authPhone"); note("#authMsg", "اكتب رقم جوالك أول", "err"); return; }
+    b.disabled = true;
+    call({ action: "admin_tg_code", phone: $("#ph").value })
+      .then(function () { note("#authMsg", "إذا الرقم رقم مشغّل المنصة، وصلك الرمز في تيليجرام.", "ok"); $("#cd").focus(); })
+      .catch(function (e) { note("#authMsg", e.message, "err"); })
+      .then(function () { setTimeout(function () { b.disabled = false; }, 45000); });
+  };
+  $("#btnPkEnroll").onclick = function () {
+    var b = this; b.disabled = true; note("#authMsg", "", "");
+    pkEnroll().then(function () { return load(); })
+      .catch(function (e) { note("#authMsg", pkErr(e), "err"); })
+      .then(function () { b.disabled = false; });
+  };
+  $("#btnPkSkip").onclick = function () { pkLsSet(PK_SKIP, String(Date.now())); load(); };
 
   var tabs = document.querySelectorAll(".nav button");
   for (var i = 0; i < tabs.length; i++) {
@@ -2447,7 +2650,7 @@ function bind() {
       settings: {
         openai_key: val("#kOpenai"), telegram_token: val("#kTg"),
         meta_app_secret: val("#kMetaSecret"), meta_verify_token: val("#kMetaVerify"),
-        platform_wa_phone_id: val("#kPlatId"), platform_wa_token: val("#kPlatTok"), otp_template: val("#kOtpTpl"),
+        platform_wa_phone_id: val("#kPlatId"), platform_wa_token: val("#kPlatTok"), platform_wa_number: val("#kPlatNum"),
       },
     }).then(function () {
       note("#keysMsg", "حُفظت المفاتيح", "ok");
@@ -2471,7 +2674,7 @@ function bind() {
   $("#btnDeleteAcct").onclick = function () { requestDeletion(); };
 
   $("#btnLogout").onclick = $("#btnLogout2").onclick = function () {
-    call({ action: "logout" }).catch(function () {}).then(logout);
+    call({ action: "logout", endpoint: NT.sub ? NT.sub.endpoint : null }).catch(function () {}).then(logout);
   };
   $("#btnExitOffice").onclick = exitOffice;
   $("#btnSaveAi").onclick = function () { saveAi(this); };
@@ -2997,7 +3200,7 @@ function openSignup() {
           throw new Error(f || res.j.error || "تعذّر الإرسال الآن، حاول بعد دقيقة");
         }
         $("#sheetBody").innerHTML = '<div class="ob-hi"><h4>' + (res.j.duplicate ? "طلبك وصلنا من قبل" : "وصل طلبك") + "</h4>" +
-          "<p>نراجع بيانات مكتبك ورخصة فال، ونتواصل معك على الواتساب على الرقم " + esc(fmtPhone(phone)) +
+          "<p>نراجع بيانات مكتبك ورخصة فال، ونتواصل معك على الواتساب على الرقم <bdi class=\"ltr num\">" + esc(fmtPhone(phone)) + "</bdi>" +
           ". بعد التفعيل تدخل التطبيق بنفس الرقم.</p></div>" +
           '<button class="btn" type="button" id="suOk">تمام</button>';
         $("#suOk").onclick = closeSheet;

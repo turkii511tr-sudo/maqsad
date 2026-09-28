@@ -429,3 +429,54 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 
 create index if not exists events_kind_id_idx on public.events (kind, id desc);
 create index if not exists messages_created_idx on public.messages (created_at);
+
+-- ===== v15: الدخول برسالة واتساب من الموظف + البصمة (راجع migrations/08) =====
+create table if not exists public.login_requests (
+  id uuid primary key default gen_random_uuid(),
+  staff_id uuid not null references public.staff(id) on delete cascade,
+  phone text not null,
+  nonce text not null,
+  poll_hash text not null,
+  channel text not null check (channel in ('platform', 'office')),
+  channel_office uuid,
+  device text,
+  expires_at timestamptz not null,
+  verified_at timestamptz,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists login_requests_phone_idx on public.login_requests (phone, nonce);
+
+create table if not exists public.passkeys (
+  id uuid primary key default gen_random_uuid(),
+  staff_id uuid not null references public.staff(id) on delete cascade,
+  cred_id text not null unique,
+  public_key jsonb not null,
+  alg integer not null,
+  sign_count bigint not null default 0,
+  rp_id text not null,
+  transports text[],
+  label text,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz
+);
+create index if not exists passkeys_staff_idx on public.passkeys (staff_id);
+
+create table if not exists public.auth_challenges (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('reg', 'login')),
+  staff_id uuid references public.staff(id) on delete cascade,
+  challenge text not null,
+  rp_id text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- لا وصول إلا من الخادم (service_role)
+alter table public.login_requests enable row level security;
+alter table public.passkeys enable row level security;
+alter table public.auth_challenges enable row level security;
+revoke all on public.login_requests, public.passkeys, public.auth_challenges from public, anon, authenticated;
+grant all on public.login_requests, public.passkeys, public.auth_challenges to service_role;
+

@@ -1,4 +1,6 @@
-// مقصد — محرك استقبال واتساب (v5.0)
+// مقصد — محرك استقبال واتساب (v5.1)
+// v5.1: الدخول إلى التطبيق برسالة «دخول مقصد ١٢٣٤» من جوال الموظف (على رقم المنصة الرسمي أو رقم مكتبه) —
+//       ما تدخل مسار العملاء، ويُرد عليها بتأكيد مع «إلغاء الدخول» · رقم المنصة للدخول فقط
 // v5.0: تقليل ما يطلع للذكاء الاصطناعي — الاسم وأرقام الجوال والهوية والآيبان والإيميل والروابط تُستبدل برموز
 //       قبل الإرسال وتُعاد بعده (نظام حماية البيانات) · store:false · صيغة المخاطبة (مذكر/مؤنث) تُمرَّر بدل الاسم
 //       · الأحياء المفصولة بالفاصلة العربية «،» تُطابق كل حي على حدة
@@ -1006,6 +1008,79 @@ async function handleVoice(office: any, v: Voice) {
   return processIncoming(office, { ...msg, body: "🎤 " + heard.text });
 }
 
+// ===== الدخول إلى تطبيق مقصد: الموظف يرسل «دخول مقصد ١٢٣٤» من واتساب جواله =====
+// الرسالة منه (فالرد عليها مجاني)، وواتساب نفسه يثبت أنه صاحب الرقم. تصل لرقم المنصة الرسمي، أو لرقم مكتبه
+// قبل ضبط رقم المنصة. لا تدخل مسار العملاء أبداً.
+const LOGIN_RX = /دخول\s*مقصد\s*([0-9٠-٩]{4,8})/;
+const CANCEL_RX = /^\s*إلغاء\s*الدخول\s*$/;
+const toLatin = (s: string) => s.replace(/[٠-٩]/g, (x) => String("٠١٢٣٤٥٦٧٨٩".indexOf(x)));
+const isLoginMsg = (body: string) => LOGIN_RX.test(body) || CANCEL_RX.test(body);
+const loginPhone = (from: string) => {
+  let d = toLatin(String(from ?? "")).replace(/@c\.us$/, "").replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (/^05\d{8}$/.test(d)) d = "966" + d.slice(1);
+  return d;
+};
+
+// channel: «platform» أو المكتب اللي وصلت على رقمه. send: يرد من نفس الرقم
+async function handleLogin(channel: { kind: "platform" | "office"; office: any }, from: string, body: string,
+  send: (text: string) => Promise<unknown>) {
+  const phone = loginPhone(from);
+  const officeId = channel.kind === "office" ? channel.office?.id ?? null : null;
+  const { data: st } = await db.from("staff").select("id,name,role,office_id,active").eq("phone", phone).maybeSingle();
+
+  if (CANCEL_RX.test(body)) {
+    if (!st) return { ok: true, login: "unknown" };
+    // «إلغاء الدخول»: نخرج كل أجهزته، ونحذف أي بصمة أُضيفت خلال الساعة الأخيرة
+    await db.from("sessions").delete().eq("staff_id", st.id).eq("kind", "session");
+    await db.from("passkeys").delete().eq("staff_id", st.id).gte("created_at", new Date(Date.now() - 3600e3).toISOString());
+    await db.from("login_requests").delete().eq("staff_id", st.id).is("used_at", null);
+    await logEvent(officeId ?? st.office_id ?? null, "warn", "login_cancelled", { staff: st.id });
+    await send("تم. أوقفنا كل جلسات الدخول لحسابك في مقصد، وحذفنا أي بصمة أُضيفت خلال الساعة الأخيرة.\nادخل من جديد من تطبيق مقصد على جوالك.");
+    return { ok: true, login: "cancelled" };
+  }
+
+  const nonce = toLatin(LOGIN_RX.exec(body)?.[1] ?? "");
+  if (!st || !st.active) {
+    await send("هذا الرقم غير مسجّل في مقصد.\nلتسجيل مكتبك: maqsadapp.com");
+    return { ok: true, login: "unregistered" };
+  }
+  const { data: r } = await db.from("login_requests").select("*").eq("phone", phone).eq("nonce", nonce)
+    .is("verified_at", null).maybeSingle();
+  const channelOk = r && (r.channel === "platform" ? channel.kind === "platform"
+    : channel.kind === "office" && r.channel_office === officeId);
+  if (!r || !channelOk || new Date(r.expires_at) < new Date()) {
+    await send("هذي الرسالة ما تطابق طلب دخول قائم (يمكن انتهت مدته ٥ دقائق).\nارجع لتطبيق مقصد واضغط «ادخل عن طريق واتساب» من جديد.");
+    return { ok: true, login: "no_match" };
+  }
+  await db.from("login_requests").update({ verified_at: new Date().toISOString() }).eq("id", r.id).is("verified_at", null);
+  await logEvent(officeId ?? st.office_id ?? null, "info", "login_whatsapp", { staff: st.id, via: r.channel });
+  await send(`تم تسجيل دخولك إلى مقصد${r.device ? " من " + r.device : ""}. ارجع للتطبيق.\n\nإذا ما كنت أنت، اكتب: إلغاء الدخول`);
+  return { ok: true, login: "verified" };
+}
+
+// رقم المنصة الرسمي (Meta): للدخول فقط. أي رسالة ثانية لها رد تعريفي واحد كل ١٢ ساعة
+function platformSender(s: Record<string, string>) {
+  return { id: null, wa_provider: "cloud", wa_instance: s.PLATFORM_WA_PHONE_ID, wa_token: s.PLATFORM_WA_TOKEN };
+}
+async function handlePlatform(s: Record<string, string>, v: any) {
+  const sender = platformSender(s);
+  for (const msg of v?.messages ?? []) {
+    const from = String(msg?.from ?? "").replace(/\D/g, "");
+    if (!from) continue;
+    const body = msg?.type === "text" ? String(msg?.text?.body ?? "").trim() : "";
+    const send = (t: string) => sendWhatsApp(sender, from, t);
+    if (body && isLoginMsg(body)) { await handleLogin({ kind: "platform", office: null }, from, body, send); continue; }
+    const key = await sha("platform|" + from);
+    const since = new Date(Date.now() - 12 * 3600e3).toISOString();
+    const { count } = await db.from("events").select("id", { count: "exact", head: true })
+      .eq("kind", "platform_info").gte("created_at", since).contains("detail", { k: key });
+    if ((count ?? 0) > 0) continue;
+    await send("هذا رقم مقصد لتسجيل الدخول إلى التطبيق فقط.\nللاستفسار أو لتسجيل مكتبك: maqsadapp.com");
+    await logEvent(null, "info", "platform_info", { k: key });
+  }
+}
+
 async function handleMeta(payload: any) {
   const jobs: Promise<unknown>[] = [];
   for (const entry of payload?.entry ?? []) {
@@ -1013,6 +1088,13 @@ async function handleMeta(payload: any) {
       const v = ch?.value ?? {};
       const pnid = String(v?.metadata?.phone_number_id ?? "");
       if (!pnid) continue;
+
+      // رقم منصة مقصد: رسائل الدخول فقط
+      const ps = await secrets();
+      if (ps.PLATFORM_WA_PHONE_ID && pnid === String(ps.PLATFORM_WA_PHONE_ID)) {
+        if (ch.field === "messages") jobs.push(handlePlatform(ps, v));
+        continue;
+      }
 
       // رد موظف من تطبيق واتساب للأعمال على نفس الرقم ← البوت يسكت لهذا العميل
       if (ch.field === "smb_message_echoes") {
@@ -1079,6 +1161,10 @@ async function handleMeta(payload: any) {
           if (["audio", "image", "video", "document", "sticker", "location"].includes(t) && falState(office) !== "blocked") {
             jobs.push(mediaNudge(office, from));
           }
+          continue;
+        }
+        if (isLoginMsg(String(body))) {
+          jobs.push(handleLogin({ kind: "office", office }, from, String(body).trim(), (t) => sendWhatsApp(office, from, t)));
           continue;
         }
         jobs.push(processIncoming(office, {
@@ -1164,6 +1250,11 @@ Deno.serve(async (req) => {
     });
     return Response.json(rv, { status: (rv as any).status ?? 200 });
   }
+  // رسالة دخول لتطبيق مقصد من موظف: ما تدخل مسار العملاء
+  if (isLoginMsg(body)) {
+    const rl = await handleLogin({ kind: "office", office }, waId, body, (t) => sendWhatsApp(office, waId, t));
+    return Response.json(rl);
+  }
   const r = await processIncoming(office, {
     waId, phone: waId.replace(/@c\.us$/, ""), name: d.pushname ?? "",
     msgId: String(d.id ?? crypto.randomUUID()), body,
@@ -1172,4 +1263,4 @@ Deno.serve(async (req) => {
 });
 
 // للاختبارات فقط: دوال الإخفاء وبناء الرسالة (لا تُستدعى من خارج الدالة في التشغيل)
-export const __test = { addressOf, nameUnits, maskText, unmask, unmaskAI, introNames, newVault, aiUserPrompt, systemPrompt };
+export const __test = { isLoginMsg, loginPhone, addressOf, nameUnits, maskText, unmask, unmaskAI, introNames, newVault, aiUserPrompt, systemPrompt };
