@@ -176,6 +176,8 @@ begin
   delete from public.sessions where kind = 'magic' and (used_at is not null or expires_at < now());
   delete from public.sessions   where expires_at < now() - interval '7 days';
   delete from public.otps       where expires_at < now() - interval '1 day';
+  delete from public.login_requests  where created_at < now() - interval '1 day';
+  delete from public.auth_challenges where created_at < now() - interval '1 day';
   delete from public.login_audit where created_at < now() - interval '90 days';
   delete from public.events     where created_at < now() - interval '90 days' and level <> 'error';
   delete from public.events     where created_at < now() - interval '12 months';
