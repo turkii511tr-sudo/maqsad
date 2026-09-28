@@ -577,3 +577,24 @@ select.input{background-image:linear-gradient(45deg,transparent 50%,var(--ink-3)
 .nf-map .pl-404{font-family:var(--f-display);font-size:15.5px;font-weight:700;fill:var(--accent)}
 .nf-copy h1{font-size:clamp(1.9rem,1.35rem + 2vw,2.8rem);line-height:1.35;font-weight:700}
 .nf-copy > p:not(.eyebrow){margin-top:16px;color:var(--ink-2);max-width:30rem}
+
+/* الأسعار */
+.plans{display:grid;gap:20px;grid-template-columns:minmax(0,1fr);align-items:start}
+@media (min-width:900px){ .plans{grid-template-columns:repeat(3,minmax(0,1fr))} }
+.plan{position:relative;display:flex;flex-direction:column;gap:14px;padding:30px 24px 28px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-lg)}
+.plan-main{border:2px solid var(--accent);box-shadow:var(--sh-card)}
+.plan-tag{position:absolute;top:-13px;inset-inline-start:22px;margin:0;padding:3px 12px;border-radius:999px;
+  background:var(--accent);color:#fff;font-size:.8em;font-weight:600}
+.plan h3{font-size:1.3em;font-weight:700;margin:0}
+.plan-for{margin:-8px 0 0;color:var(--ink-3)}
+.plan-price{display:flex;align-items:baseline;gap:8px;margin:4px 0 6px}
+.plan-price b{font-family:var(--f-display);font-size:2.4em;line-height:1;color:var(--ink)}
+.plan-price span{color:var(--ink-2)}
+.plan ul{display:grid;gap:12px;margin:0 0 8px;padding:0;list-style:none}
+.plan li{display:flex;gap:10px;align-items:flex-start;color:var(--ink-2)}
+.plan li svg{flex:none;width:20px;height:20px;margin-top:3px;color:var(--ok)}
+.plan .btn{margin-top:auto;justify-content:center}
+.plan-notes{margin:28px 0 0;padding:0;list-style:none;display:grid;gap:10px;color:var(--ink-2);font-size:.95em;max-width:52rem}
+.plan-notes li{position:relative;padding-inline-start:18px}
+.plan-notes li::before{content:"";position:absolute;inset-inline-start:0;top:.75em;width:6px;height:6px;border-radius:50%;background:var(--ink-3)}
