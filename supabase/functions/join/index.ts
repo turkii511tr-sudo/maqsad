@@ -1,4 +1,5 @@
-// مقصد — استقبال طلبات الانضمام من الموقع والتطبيق (v1.2)
+// مقصد — استقبال طلبات الانضمام من الموقع والتطبيق (v1.3)
+// v1.3: أُلغي قبول نموذج الموقع القديم بلا صورة الرخصة (الموقع الجديد منشور)
 // v1.2: رقم رخصة فال وصورتها (صورة أو PDF) إلزامية — تُحفظ في مخزن خاص ولا يفتحها إلا المدير
 // نموذج عام: بلا جلسة، بحماية من الإغراق (فخ للبرامج الآلية + حد لكل عنوان + منع التكرار)
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -108,9 +109,6 @@ Deno.serve(async (req) => {
   }
 
   const errors: Record<string, string> = {};
-  // النماذج الجديدة (v=2) ترسل صورة الرخصة إلزامياً. نموذج الموقع القديم (بلا v) يُقبل بدونها
-  // لين يُرفع الموقع الجديد، وبعدها يُحذف هذا الاستثناء
-  const legacy = b.v === undefined && b.fal_file === undefined;
   const office_name = text(b.office_name, 120);
   const contact_name = text(b.contact_name, 80);
   const phone = saudiMobile(b.phone);
@@ -123,10 +121,10 @@ Deno.serve(async (req) => {
   if (office_name.length < 2) errors.office_name = "اكتب اسم المكتب";
   if (contact_name.length < 2) errors.contact_name = "اكتب اسمك";
   if (!phone) errors.phone = "اكتب رقم جوال سعودي يبدأ بـ 05";
-  if (!fal_license && !legacy) errors.fal_license = "اكتب رقم رخصة فال";
+  if (!fal_license) errors.fal_license = "اكتب رقم رخصة فال";
   else if (fal_license && (fal_license.length < 4 || fal_license.length > 20)) errors.fal_license = "رقم رخصة فال أرقام فقط";
-  const upload = legacy ? null : parseUpload(b.fal_file);
-  if (!legacy && !upload) errors.fal_file = b.fal_file ? "الملف لازم يكون صورة أو PDF، وحجمه أقل من ٣ ميجابايت" : "أرفق صورة رخصة فال";
+  const upload = parseUpload(b.fal_file);
+  if (!upload) errors.fal_file = b.fal_file ? "الملف لازم يكون صورة أو PDF، وحجمه أقل من ٣ ميجابايت" : "أرفق صورة رخصة فال";
   if (b.consent !== true) errors.consent = "الموافقة على سياسة الخصوصية مطلوبة لإرسال الطلب";
   if (Object.keys(errors).length) return json({ error: "راجع الحقول المظللة", fields: errors }, 422);
 
@@ -148,11 +146,9 @@ Deno.serve(async (req) => {
   if ((samePhone ?? 0) > 0) return json({ ok: true, duplicate: true });
 
   // الملف يُحفظ قبل الطلب: إذا فشل الحفظ نرجع خطأ بدل طلب بلا رخصة
-  const fal_proof_path = upload
-    ? `signups/${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}.${upload.ext}` : null;
-  const { error: upErr } = upload
-    ? await db.storage.from(BUCKET).upload(fal_proof_path!, upload.bytes, { contentType: upload.mime, upsert: false })
-    : { error: null };
+  const fal_proof_path = `signups/${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}.${upload!.ext}`;
+  const { error: upErr } = await db.storage.from(BUCKET)
+    .upload(fal_proof_path, upload!.bytes, { contentType: upload!.mime, upsert: false });
   if (upErr) {
     await db.from("events").insert({ level: "error", kind: "signup_upload_failed", detail: { error: upErr.message } });
     return json({ error: "تعذّر رفع صورة الرخصة الآن، حاول بعد دقيقة" }, 500);
@@ -172,7 +168,7 @@ Deno.serve(async (req) => {
   await tell(
     `🆕 طلب انضمام لمقصد\n\n` +
     `🏢 ${office_name}\n👤 ${contact_name}\n📱 ${phone}\n` +
-    `📍 ${city ?? "—"}\n🪪 فال: ${fal_license ?? "لم يُذكر"}${fal_proof_path ? " (صورة الرخصة مرفقة في المنصة)" : ""}\n👥 الوسطاء: ${agents ?? "—"}\n` +
+    `📍 ${city ?? "—"}\n🪪 فال: ${fal_license} (صورة الرخصة مرفقة في المنصة)\n👥 الوسطاء: ${agents ?? "—"}\n` +
     (note ? `📝 ${note}\n` : "") +
     `\n🔗 https://wa.me/${phone}\n\nتجده في منصة مقصد ← طلبات الانضمام.`,
   );
