@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102A43">
+<title>مقصد</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%20width='32'%20height='32'%3E%3Crect%20width='100'%20height='100'%20rx='22'%20fill='%23102A43'/%3E%3Cg%20transform='translate(12%2010)%20scale(.76)'%3E%3Ccircle%20cx='50'%20cy='37'%20r='20'%20fill='none'%20stroke='%23FFFFFF'%20stroke-width='17'/%3E%3Cpath%20d='M41%2052%20L59%2052%20L52%2089%20Q50%2093%2048%2089%20Z'%20fill='%23FFFFFF'/%3E%3Cellipse%20cx='50'%20cy='95'%20rx='13'%20ry='4'%20fill='%23E9A23B'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
+<style>/*__CSS__*/</style>
+</head>
+<body>
+
+<!-- ============ الدخول ============ -->
+<div class="auth" id="auth">
+  <div class="inner">
+    <div class="mark"><svg class="mono" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><circle cx="50" cy="37" r="19.5" fill="none" stroke="currentColor" stroke-width="14"/><path d="M43 52 L57 52 L51.6 87 Q50 91.5 48.4 87 Z" fill="currentColor"/><ellipse cx="50" cy="94" rx="11" ry="3.2" fill="#E9A23B"/></svg></div>
+    <h1><span class="vh">مقصد</span><svg class="wm" viewBox="56 18 222 66" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><circle cx="262" cy="58" r="11"/><path d="M258 69 L240 69"/><circle cx="229" cy="57" r="11"/><path d="M232 69 L205 69"/><path d="M205 69 L205 60 Q205 47 190 47 L168 47 Q156 47 156 58 Q156 69 168 69 L205 69"/><path d="M168 69 L140 69 L140 59 M140 69 L112 69"/><path d="M112 69 L96 40"/><path d="M112 69 L74 69 Q66 69 66 61"/></g><g fill="#E9A23B"><circle cx="223" cy="29" r="5.5"/><circle cx="237" cy="29" r="5.5"/></g></svg></h1>
+    <p class="tagline">كل عميل يكتب لك عنده مقصد<br>نستخرجه قبل ما يفوت</p>
+
+    <div class="panel" id="authPhone">
+      <button class="btn pk-btn" id="btnPk" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 11c0 3.5-.5 6.5-2 9"/><path d="M8.5 9.5a3.5 3.5 0 0 1 7 0c0 1.8-.1 3.6-.4 5.3"/><path d="M5.5 8a7 7 0 0 1 13 1.5c0 1.6-.1 3.2-.3 4.6"/><path d="M14.8 18.5c-.3 1-.7 2-1.2 2.9"/><path d="M4 12.5c.3-.8.5-1.7.5-2.5"/></svg>
+        ادخل بالبصمة
+      </button>
+      <div class="auth-or" id="pkOr" hidden><span>أو برقم جوالك</span></div>
+      <div class="field">
+        <label for="ph">رقم جوالك المسجّل</label>
+        <input id="ph" class="input ltr" type="tel" inputmode="numeric"
+               placeholder="05XXXXXXXX" autocomplete="tel">
+      </div>
+      <button class="btn wa" id="btnWa" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-13.4 7.9L3 21l1.2-4.5A9 9 0 1 1 21 12z"/></svg>
+        ادخل عن طريق واتساب
+      </button>
+      <p class="hint auth-hint">ترسل رسالة جاهزة من واتسابك وتدخل على طول — بدون رموز</p>
+      <button class="auth-link" id="btnPkLink" type="button" hidden>عندك بصمة مفعّلة على هذا الجوال؟ ادخل بها</button>
+    </div>
+
+    <div class="panel" id="authWait" hidden>
+      <p class="wait-t">أرسل هذي الرسالة من واتساب جوالك</p>
+      <div class="wait-msg" id="waText">دخول مقصد</div>
+      <a class="btn wa" id="btnOpenWa" href="#" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-13.4 7.9L3 21l1.2-4.5A9 9 0 1 1 21 12z"/></svg>
+        افتح واتساب وأرسلها
+      </a>
+      <p class="hint auth-hint" id="waTo"></p>
+      <div class="wait-state" id="waitState"><span class="spin" aria-hidden="true"></span><span id="waitLbl">بانتظار رسالتك… ارجع هنا بعد ما ترسلها</span></div>
+      <button class="btn ghost" id="btnWaBack" type="button">رجوع</button>
+    </div>
+
+    <div class="panel" id="authCode" hidden>
+      <div class="field">
+        <label for="cd">رمز الدخول من فريق مقصد</label>
+        <input id="cd" class="input code" type="tel" inputmode="numeric" maxlength="6"
+               placeholder="······" autocomplete="one-time-code">
+      </div>
+      <button class="btn" id="btnVerify" type="button">دخول</button>
+      <div style="height:8px"></div>
+      <button class="btn ghost" id="btnBack" type="button">رجوع</button>
+      <button class="auth-link" id="btnTgCode" type="button">مشغّل المنصة؟ أرسل الرمز لتيليجرام</button>
+    </div>
+
+    <div class="panel" id="authPk" hidden>
+      <div class="pk-offer">
+        <div class="pk-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 11c0 3.5-.5 6.5-2 9"/><path d="M8.5 9.5a3.5 3.5 0 0 1 7 0c0 1.8-.1 3.6-.4 5.3"/><path d="M5.5 8a7 7 0 0 1 13 1.5c0 1.6-.1 3.2-.3 4.6"/><path d="M14.8 18.5c-.3 1-.7 2-1.2 2.9"/><path d="M4 12.5c.3-.8.5-1.7.5-2.5"/></svg></div>
+        <b>تم الدخول ✓</b>
+        <p>المرة الجاية ادخل ببصمتك بدل رسالة الواتساب. فعّلها على هذا الجوال — تاخذ ثانيتين.</p>
+      </div>
+      <button class="btn" id="btnPkEnroll" type="button">فعّل الدخول بالبصمة</button>
+      <div style="height:8px"></div>
+      <button class="btn ghost" id="btnPkSkip" type="button">لاحقاً</button>
+    </div>
+
+    <div id="authMsg"></div>
+    <button class="auth-link on-dark" id="btnHaveCode" type="button">عندي رمز دخول من فريق مقصد</button>
+    <div class="signup-cta">
+      <span>مكتبك مو مسجّل في مقصد؟</span>
+      <button class="btn ghost" id="btnSignup" type="button">سجّل مكتبك</button>
+    </div>
+    <p class="foot">منصة مقصد — إدارة عملاء المكاتب العقارية</p>
+  </div>
+</div>
+
+<!-- ============ التطبيق ============ -->
+<div id="app" hidden>
+
+  <header class="topbar">
+    <div class="in">
+      <div class="brandmark">
+        <div class="sq"><svg class="mono" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><circle cx="50" cy="37" r="19.5" fill="none" stroke="currentColor" stroke-width="14"/><path d="M43 52 L57 52 L51.6 87 Q50 91.5 48.4 87 Z" fill="currentColor"/><ellipse cx="50" cy="94" rx="11" ry="3.2" fill="#E9A23B"/></svg></div>
+        <div class="who">
+          <b id="topOffice">—</b>
+          <span id="topStaff">—</span>
+        </div>
+      </div>
+      <button class="btn ghost sm" id="btnRefresh" title="تحديث">
+        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+        تحديث
+      </button>
+    </div>
+  </header>
+
+  <div class="inoffice" id="inOffice" hidden>
+    <div class="in">
+      <span class="io-t">أنت داخل <b id="inOfficeName">—</b> كمدير المنصة. أي تعديل هنا ينحفظ باسمك في السجل.</span>
+      <button class="btn sm" id="btnExitOffice" type="button">
+        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+        رجوع للوحة المنصة
+      </button>
+    </div>
+  </div>
+
+  <nav class="nav" role="tablist">
+    <div class="in">
+      <button role="tab" data-mode="office" data-screen="s-today" aria-selected="true">
+        <svg viewBox="0 0 24 24"><path d="M12 2v3M4.9 4.9 7 7M2 12h3M19 7l2.1-2.1M19 12h3"/>
+        <path d="M12 8a4 4 0 0 1 4 4c0 1.6-1 2.5-1.5 3.5H9.5C9 14.5 8 13.6 8 12a4 4 0 0 1 4-4Z"/>
+        <path d="M10 19h4M10.5 22h3"/></svg>
+        اليوم<span class="dot" id="navDot" hidden></span>
+      </button>
+      <button role="tab" data-mode="office" data-screen="s-leads" aria-selected="false">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        العملاء
+      </button>
+      <button role="tab" data-mode="office" data-screen="s-stock" aria-selected="false">
+        <svg viewBox="0 0 24 24"><path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>
+        <path d="M9 21v-7h6v7"/></svg>
+        العقارات
+      </button>
+      <button role="tab" data-mode="platform" data-screen="s-home" aria-selected="false" hidden>
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        الرئيسية<span class="dot" id="navHomeDot" hidden></span>
+      </button>
+      <button role="tab" data-mode="platform" data-screen="s-offices" aria-selected="false" hidden>
+        <svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-4 7 4v13M10 21v-5h4v5"/></svg>
+        المكاتب<span class="dot" id="navOfficesDot" hidden></span>
+      </button>
+      <button role="tab" data-mode="platform" data-screen="s-signups" aria-selected="false" hidden>
+        <svg viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.5 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.5a2 2 0 0 0-1.8-1H7.3a2 2 0 0 0-1.8 1Z"/></svg>
+        الطلبات<span class="dot" id="navSignDot" hidden></span>
+      </button>
+      <button role="tab" data-mode="platform" data-screen="s-platform" aria-selected="false" hidden>
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+        المنصة
+      </button>
+      <button role="tab" data-mode="office" data-screen="s-set" aria-selected="false">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>
+        الإعدادات
+      </button>
+    </div>
+  </nav>
+
+  <main class="shell">
+
+    <!-- ===== اليوم ===== -->
+    <section class="screen on" id="s-today">
+      <div class="shead">
+        <h2 id="greet">أهلاً</h2>
+        <span class="meta" id="todayDate"></span>
+      </div>
+
+      <div class="block">
+        <div class="stats" id="todayStats"></div>
+      </div>
+
+      <div class="block">
+        <h3>يحتاج انتباهك</h3>
+        <div id="attnList"></div>
+      </div>
+
+      <div class="block" id="monthBlock">
+        <div class="bhead">
+          <h3>أداء المكتب</h3>
+          <div class="chips sm" id="monthChips">
+            <button class="chip" data-m="cur" aria-pressed="true">هذا الشهر</button>
+            <button class="chip" data-m="prev" aria-pressed="false">الشهر الماضي</button>
+          </div>
+        </div>
+        <div id="monthCard"></div>
+      </div>
+
+      <div class="block" id="gapBlock" hidden>
+        <h3>فرص ضائعة — طلبات بلا مخزون</h3>
+        <div class="rows" id="gapList"></div>
+      </div>
+    </section>
+
+    <!-- ===== العملاء ===== -->
+    <section class="screen" id="s-leads">
+      <div class="shead"><h2>العملاء</h2><span class="meta" id="leadsCount"></span></div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="leadSearch" class="input" type="search" placeholder="ابحث بالاسم أو الجوال أو الحي">
+      </div>
+
+      <div class="chips" id="leadChips">
+        <button class="chip" data-f="all" aria-pressed="true">الكل</button>
+        <button class="chip" data-f="waiting" aria-pressed="false">ينتظر اتصالك</button>
+        <button class="chip" data-f="qualified" aria-pressed="false">مؤهل</button>
+        <button class="chip" data-f="manual" aria-pressed="false">مُسلَّم للوسيط</button>
+        <button class="chip" data-f="auto" aria-pressed="false">البوت يتابعه</button>
+      </div>
+
+      <div id="leadsWrap"></div>
+    </section>
+
+    <!-- ===== العقارات ===== -->
+    <section class="screen" id="s-stock">
+      <div class="shead"><h2>العقارات</h2><span class="meta" id="stockCount"></span></div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="stockSearch" class="input" type="search" placeholder="ابحث بالاسم أو الحي">
+      </div>
+
+      <div class="chips" id="stockChips">
+        <button class="chip" data-f="all" aria-pressed="true">الكل</button>
+        <button class="chip" data-f="listable" aria-pressed="false">قابل للعرض</button>
+        <button class="chip" data-f="blocked" aria-pressed="false">محجوب — ترخيص</button>
+      </div>
+
+      <button class="btn" id="btnNewProp" style="margin-bottom:var(--s4)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        أضف عقاراً
+      </button>
+
+      <div id="stockWrap"></div>
+    </section>
+
+
+    <!-- ===== لوحة المنصة: الرئيسية ===== -->
+    <section class="screen" id="s-home">
+      <div class="shead">
+        <h2 id="homeGreet">أهلاً</h2>
+        <span class="meta" id="homeDate"></span>
+      </div>
+      <div class="block">
+        <div class="stats" id="homeStats"></div>
+      </div>
+      <div class="block">
+        <h3>يحتاج انتباهك</h3>
+        <div id="homeAttn"></div>
+      </div>
+      <div class="block">
+        <h3>حالة الخدمات</h3>
+        <div class="card"><dl class="dl" id="homeServices"></dl></div>
+      </div>
+    </section>
+
+    <!-- ===== لوحة المنصة: طلبات الانضمام ===== -->
+    <section class="screen" id="s-signups">
+      <div class="shead"><h2>طلبات الانضمام</h2><span class="meta" id="signupsCount"></span></div>
+      <p class="hint tight">تجي من نموذج الموقع ومن زر «سجّل مكتبك» في التطبيق، ومعها صورة رخصة فال. طابق الصورة مع استعلام الهيئة قبل ما تنشئ المكتب.</p>
+      <div class="block" id="signupBlock">
+        <div class="chips" id="signupChips">
+          <button class="chip" data-f="new" aria-pressed="true">جديدة</button>
+          <button class="chip" data-f="contacted" aria-pressed="false">تم التواصل</button>
+          <button class="chip" data-f="converted" aria-pressed="false">صارت مكتباً</button>
+          <button class="chip" data-f="rejected" aria-pressed="false">مستبعدة</button>
+        </div>
+        <div id="signupList"></div>
+      </div>
+    </section>
+
+    <!-- ===== لوحة المنصة: إعدادات المنصة ===== -->
+    <section class="screen" id="s-platform">
+      <div class="shead"><h2>إعدادات المنصة</h2></div>
+
+      <div class="block" id="aiBlock">
+        <h3>الذكاء الاصطناعي</h3>
+        <div class="card">
+          <div class="grid2">
+            <div class="field">
+              <label for="aiModel">النموذج اللي يفهم رسائل العملاء</label>
+              <select id="aiModel" class="input">
+                <option value="gpt-6-luna">GPT-6 Luna — الأحدث (موصى به)</option>
+                <option value="gpt-4o-mini">GPT-4o mini — القديم</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="aiEffort">مستوى التفكير</label>
+              <select id="aiEffort" class="input">
+                <option value="low">منخفض — أسرع وأرخص (موصى به)</option>
+                <option value="medium">متوسط</option>
+                <option value="high">عالي — أبطأ وأغلى</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint">إذا تعطّل النموذج الأحدث يرجع المساعد تلقائياً للقديم، والعميل ما يحس بشي.</p>
+          <button class="btn ghost" id="btnSaveAi" type="button">حفظ</button>
+          <div id="aiMsg"></div>
+        </div>
+      </div>
+
+      <div class="block" id="usageBlock">
+        <div class="bhead">
+          <h3>الاستهلاك والتكلفة</h3>
+          <div class="chips sm" id="usageChips">
+            <button class="chip" data-m="cur" aria-pressed="true">هذا الشهر</button>
+            <button class="chip" data-m="prev" aria-pressed="false">الشهر الماضي</button>
+          </div>
+        </div>
+        <div id="usageBody"></div>
+      </div>
+      <div class="block" id="keysBlock">
+        <h3>الربط والمفاتيح</h3>
+        <div class="card">
+          <div class="field">
+            <label for="kOpenai">مفتاح OpenAI — لفهم رسائل العملاء</label>
+            <input id="kOpenai" class="input ltr" type="password" autocomplete="off" placeholder="sk-...">
+          </div>
+          <h4 class="subhead">واتساب الرسمي من ميتا</h4>
+          <div class="grid2">
+            <div class="field">
+              <label for="kMetaSecret">App Secret</label>
+              <input id="kMetaSecret" class="input ltr" type="password" autocomplete="off">
+              <p class="hint">من تطبيقك في Meta for Developers ← App settings ← Basic.</p>
+            </div>
+            <div class="field">
+              <label for="kMetaVerify">رمز التحقق (Verify token)</label>
+              <input id="kMetaVerify" class="input ltr" autocomplete="off" placeholder="اختر أي كلمة سرية">
+              <p class="hint">تكتب نفس الكلمة في إعدادات Webhook عند ميتا.</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="kHook">رابط الاستقبال (Callback URL)</label>
+            <div class="copyrow">
+              <input id="kHook" class="input ltr" readonly>
+              <button class="btn ghost sm" id="btnCopyHook" type="button">نسخ</button>
+            </div>
+            <p class="hint">الصقه في ميتا ← WhatsApp ← Configuration ← Webhook، واشترك في messages و smb_message_echoes.</p>
+          </div>
+
+          <h4 class="subhead">رقم مقصد الرسمي — للدخول</h4>
+          <p class="hint tight">الموظفين يرسلون عليه رسالة «دخول مقصد» من واتسابهم، والرد عليها مجاني. بدونه يرسلونها لرقم واتساب مكتبهم. اربط رقم المنصة بنفس رابط الاستقبال أعلاه.</p>
+          <div class="grid2">
+            <div class="field">
+              <label for="kPlatId">معرّف رقم المنصة (Phone number ID)</label>
+              <input id="kPlatId" class="input ltr" inputmode="numeric" autocomplete="off" placeholder="109876543210987">
+            </div>
+            <div class="field">
+              <label for="kPlatTok">رمز الوصول الدائم (System user token)</label>
+              <input id="kPlatTok" class="input ltr" type="password" autocomplete="off">
+            </div>
+          </div>
+          <div class="field">
+            <label for="kPlatNum">رقم المنصة كما يظهر للموظفين</label>
+            <input id="kPlatNum" class="input ltr" type="tel" inputmode="numeric" autocomplete="off" placeholder="05XXXXXXXX">
+          </div>
+
+          <h4 class="subhead">تيليجرام</h4>
+          <div class="field">
+            <label for="kTg">توكن بوت تيليجرام</label>
+            <input id="kTg" class="input ltr" type="password" autocomplete="off" placeholder="8123456789:AAH...">
+            <p class="hint">من BotFather — أرقام ثم نقطتان ثم حروف. ليس رقم المجموعة.</p>
+          </div>
+          <div class="btnrow">
+            <button class="btn" id="btnSaveKeys">حفظ المفاتيح</button>
+          </div>
+          <div id="keysMsg"></div>
+        </div>
+      </div>
+      <div class="block">
+        <h3>النسخ الاحتياطي</h3>
+        <div class="card"><div id="backupList"></div></div>
+      </div>
+
+      <div class="block">
+        <h3>سجل تعديلات المدير</h3>
+        <p class="hint tight">كل تعديل تسويه داخل أي مكتب أو في إعدادات المنصة: متى، ووين، ووش تغيّر.</p>
+        <div class="card"><div id="adminLog"></div></div>
+      </div>
+
+      <div class="block">
+        <h3>حسابي</h3>
+        <div class="card">
+          <p class="hint tight" id="superSession">دخول المدير ينتهي بعد ٧ أيام، وترجع ببصمتك.</p>
+          <button class="btn danger" id="btnLogout2" type="button">تسجيل الخروج</button>
+        </div>
+        <div class="card pk-card" id="pkBox2"></div>
+      </div>
+    </section>
+
+    <!-- ===== لوحة المنصة: المكاتب ===== -->
+    <section class="screen" id="s-offices">
+      <div class="shead"><h2>المكاتب</h2><span class="meta" id="officesCount"></span></div>
+      
+
+
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="officeSearch" class="input" type="search" placeholder="ابحث باسم المكتب أو رمزه أو رقم الرخصة">
+      </div>
+      <div class="chips" id="officeChips">
+        <button class="chip" data-f="all" aria-pressed="true">الكل</button>
+        <button class="chip" data-f="attn" aria-pressed="false">يحتاج انتباه</button>
+        <button class="chip" data-f="on" aria-pressed="false">شغّال</button>
+        <button class="chip" data-f="off" aria-pressed="false">موقوف</button>
+      </div>
+
+      <div class="block">
+        <div class="rows" id="officesList"></div>
+        <div style="height:var(--s3)"></div>
+        <button class="btn ghost" id="btnNewOffice">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          أضف مكتباً
+        </button>
+      </div>
+
+    </section>
+
+    <!-- ===== الإعدادات ===== -->
+    <section class="screen" id="s-set">
+      <div class="shead"><h2>الإعدادات</h2><span class="meta" id="officeCode"></span></div>
+
+      <div class="block" id="notifyBlock">
+        <h3>التنبيهات</h3>
+        <p class="hint tight">وين يوصلك العميل الجاهز؟ اختر طريقة وحدة أو الاثنين.</p>
+        <div class="card nt" id="notifyCard"></div>
+      </div>
+
+      <div class="block">
+        <h3>مكتبي</h3>
+        <div class="card"><dl class="dl" id="officeInfo"></dl></div>
+        <p class="hint" id="falNote" hidden></p>
+        <div id="falReqBox"></div>
+      </div>
+
+      <div class="block" id="sysBlock" hidden>
+        <h3>حالة النظام</h3>
+        <div class="card"><div id="sysStatus"></div></div>
+      </div>
+
+      <div class="block">
+        <h3>حسابي</h3>
+        <div class="card">
+          <div class="field">
+            <label for="myPhone">رقم جوالي — به أسجّل دخولي</label>
+            <input id="myPhone" class="input ltr" type="tel" inputmode="numeric" placeholder="9665XXXXXXXX">
+          </div>
+          <div class="btnrow">
+            <button class="btn ghost" id="btnSaveMe">حفظ رقمي</button>
+            <button class="btn danger" id="btnLogout">تسجيل الخروج</button>
+          </div>
+          <div id="meMsg"></div>
+        </div>
+        <div class="card pk-card" id="pkBox"></div>
+      </div>
+
+
+      <div class="block" id="dataBlock" hidden>
+        <h3>بيانات مكتبك</h3>
+        <div class="card">
+          <p class="lead">بياناتك ملكك. نزّلها متى شئت، أو اطلب حذف حسابك بالكامل.</p>
+          <div class="btnrow">
+            <button class="btn ghost" id="btnExpCustomers" type="button">العملاء — ملف Excel (CSV)</button>
+            <button class="btn ghost" id="btnExpProps" type="button">العقارات — ملف Excel (CSV)</button>
+          </div>
+          <div style="height:8px"></div>
+          <button class="btn ghost" id="btnExpJson" type="button">نسخة كاملة بكل المحادثات</button>
+          <div id="dataMsg"></div>
+          <div class="divider"></div>
+          <button class="btn danger" id="btnDeleteAcct" type="button">طلب حذف حساب المكتب</button>
+          <p class="hint">ننفّذ الطلب خلال ٣٠ يوماً كحد أقصى، بعد ما نرسل لك نسخة من بياناتك.</p>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ اللوح المنزلق ============ -->
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="hd">
+    <h3 id="sheetTitle">—</h3>
+    <button class="x" id="sheetClose" aria-label="إغلاق">
+      <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="bd" id="sheetBody"></div>
+</div>
+
+<script>/*__JS__*/</script>
+</body>
+</html>

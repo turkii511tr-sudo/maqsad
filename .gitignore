@@ -1,0 +1,22 @@
+# build outputs
+site/dist/
+site/preview/
+app/dist/
+__pycache__/
+*.pyc
+node_modules/
+
+# screenshots and local test artefacts
+*.png.tmp
+shots/
+screenshots/
+/shot*.png
+app/tests/shot*.png
+
+# never commit secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets*.json
