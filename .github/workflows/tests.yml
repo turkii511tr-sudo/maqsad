@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: تثبيت typescript و playwright
+      - name: تثبيت typescript 6 (نسخة 7 غيّرت واجهتها) و playwright
         run: |
-          npm i -g typescript playwright
+          npm i -g typescript@6 playwright
           echo "NODE_PATH=$(npm root -g)" >> "$GITHUB_ENV"
           npx playwright install --with-deps chromium
 
