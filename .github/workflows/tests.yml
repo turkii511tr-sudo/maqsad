@@ -1,0 +1,64 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: تثبيت typescript و playwright
+        run: |
+          npm i -g typescript playwright
+          echo "NODE_PATH=$(npm root -g)" >> "$GITHUB_ENV"
+          npx playwright install --with-deps chromium
+
+      - name: مطابقة نسخ notify.ts للأصل
+        run: |
+          ref=$(md5sum supabase/functions/_shared/notify.ts | cut -d' ' -f1)
+          bad=0
+          for f in supabase/functions/*/notify.ts; do
+            h=$(md5sum "$f" | cut -d' ' -f1)
+            if [ "$h" != "$ref" ]; then echo "::error file=$f::غير مطابق لـ _shared/notify.ts"; bad=1; else echo "مطابق: $f"; fi
+          done
+          exit $bad
+
+      - name: لا ملفات .env ولا مفاتيح في المستودع
+        run: |
+          bad=0
+          envs=$(git ls-files | grep -E '(^|/)\.env(\..*)?$' | grep -vE '(^|/)\.env\.example$' || true)
+          if [ -n "$envs" ]; then echo "::error::ملفات .env متتبعة:"; echo "$envs"; bad=1; fi
+          hits=$(git grep -nIE 'sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|EAA[A-Za-z0-9]{40,}|-----BEGIN ([A-Z]+ )?PRIVATE KEY' -- . ':!.github/workflows/tests.yml' || true)
+          if [ -n "$hits" ]; then echo "::error::نص يشبه مفتاحاً:"; echo "$hits" | cut -c1-120; bad=1; fi
+          exit $bad
+
+      - name: اختبارات الخادم
+        run: |
+          for f in supabase/tests/*.test.mjs; do
+            echo "== $f"
+            node "$f"
+          done
+
+      - name: اختبارات التطبيق
+        run: |
+          python3 app/build.py
+          for t in test4.js test5.js v14.test.js v15.test.js admin.test.js; do
+            echo "== app/tests/$t"
+            node "app/tests/$t"
+          done
+
+      - name: اختبارات الموقع
+        run: |
+          python3 site/build.py
+          node site/test/site.test.js

@@ -92,7 +92,7 @@
 - **الدوال**: `api`: `officesFor`, `statusFor`, `logAdmin`, `sendWhatsApp` · `app.js`: `officeIssues`, `officeMatches`, `renderSettings`, `saveAi`, `loadAdminLog`.
 - **الجداول**: `offices`, `staff`, `app_secrets`, `events`.
 - **يعتمد على**: B2 (دور `super_admin` = `isSuper`)، B6.
-- **الاختبار**: `node app/tests/admin.test.js` · `node app/tests/test3.js` · `api.test.mjs`.
+- **الاختبار**: `node app/tests/admin.test.js` · `node app/tests/test4.js` · `api.test.mjs`.
 - **الخطورة**: **عالية** — يكتب مفاتيح واتساب المكتب و`app_secrets`، وتغيير `license_no` يعيد فال إلى `pending`.
 
 ### B5 — العقارات والمطابقة
@@ -119,7 +119,7 @@
 - **نقطة الدخول**: `app.js` → `staffPanel` ← `api` actions `staff_list`, `staff_save`, `staff_delete`, `staff_code`.
 - **الجداول**: `staff`, `sessions`.
 - **الأدوار**: قيد `staff_role_chk` في `01_schema.sql`؛ فحص `isSuper`/`isOwner` داخل `handle`.
-- **الاختبار**: `node app/tests/test3.js`, `node app/tests/shot-staff.js` · `api.test.mjs`, `login.test.mjs`.
+- **الاختبار**: `node app/tests/admin.test.js`, `node app/tests/shot-staff.js` · `api.test.mjs`, `login.test.mjs`.
 - **الخطورة**: متوسطة — خطأ في فحص الدور = تصعيد صلاحيات.
 
 ### B8 — التنبيهات (تيليجرام + إشعارات الجوال)
@@ -145,7 +145,7 @@
 - **نقطة الدخول**: `site/build.py` (يولّد `site/dist/`) · `site/src/assets/site.js` (يرسل النماذج إلى `data-endpoint`، والأساس `api_base` في `site/site.config.json`) · `join/index.ts`, `contact/index.ts` → `Deno.serve` · `app.js` → `openSignup` (`JOIN_API`), `loadSignups`, `renderSignups`, `setSignup` ← `api` actions `signup_list`, `signup_update`, `signup_proof`.
 - **الجداول / مخازن**: `signup_requests`, `contact_messages`, `events` · مخزن `fal-proofs` (الثابت `BUCKET` في `join`).
 - **الصفحات**: `site/src/pages/` (`index`, `contact`, `privacy`, `terms`, `refund`, `404`) + `site/src/partials/`.
-- **الاختبار**: `node supabase/tests/site.test.mjs` · `python3 site/build.py && node site/test/site.test.js` · `node app/tests/test2.js`.
+- **الاختبار**: `node supabase/tests/site.test.mjs` · `python3 site/build.py && node site/test/site.test.js` · `node app/tests/admin.test.js` (مراجعة الطلبات).
 - **النشر**: Netlify (maqsad-site) للموقع؛ `join`/`contact` كدوال.
 - **الخطورة**: متوسطة — نماذج عامة بلا دخول (حد لكل IP داخل الدالتين).
 
@@ -202,12 +202,12 @@
 
 | القاعدة (CLAUDE.md) | أين تُطبَّق في الكود | الحالة |
 | --- | --- | --- |
-| لا مفاتيح ولا `.env` في المستودع | `.gitignore` (يستثني `.env`, `.env.*`, `*.pem`, `*.key`, `secrets*.json`) · `.env.example` أسماء فقط · كل الدوال تقرأ `app_secrets` عبر `secrets()` · `backup.test.mjs` يفحص خلو ملف النسخة من المفاتيح | مطبقة (لا فحص آلي قبل الـ commit) |
+| لا مفاتيح ولا `.env` في المستودع | `.gitignore` (يستثني `.env`, `.env.*`, `*.pem`, `*.key`, `secrets*.json`) · `.env.example` أسماء فقط · كل الدوال تقرأ `app_secrets` عبر `secrets()` · `backup.test.mjs` يفحص خلو ملف النسخة من المفاتيح | مطبقة (فحص آلي بعد الرفع في `.github/workflows/tests.yml`: ملفات `.env` المتتبعة ونصوص تشبه المفاتيح) |
 | لا يُعرض مكتب بلا رخصة فال | `wa:falState` + `wa:processIncoming` (لا رد ولا حفظ لعملاء مكتب `blocked` إلا المجرّبين `isTester`) · `wa:systemPrompt(licensed)` لا يذكر رقم الرخصة إن لم تكن سارية · `canList` يمنع عرض العقارات عند `expired` · `api:decorate` (`officeBlock`) · `fal-check` يوقف العرض عند الانتهاء | مطبقة |
 | لا يُعرض عقار إلا بترخيص إعلان ساري (رقم + تاريخ انتهاء) | `v_listable_properties` (`ad_license_no` غير فارغ + `ad_license_expiry >= current_date`) ← `match_properties` · `api:decorate` (`listable`/`block_reason`). عرض المالك يُسلَّم للوسيط (`owner_offer`) لترخيص إعلانه | مطبقة |
 | واتساب الرسمي (Meta) فقط للإطلاق | `wa` يدعم ميتا (`handleMeta`, `metaSignatureOk`) · `api:office_save` يجعل `cloud` هو الافتراضي في الإدخال | **غير مطبقة في الكود**: UltraMsg ما زال مدعوماً في `wa:Deno.serve` و`wa:sendWhatsApp` و`api:sendWhatsApp`، والقيمة الافتراضية لعمود `offices.wa_provider` في `01_schema.sql` هي `ultramsg`. المنع حالياً إجرائي فقط |
 | لا إعادة كتابة ولا تغيير بنية | إجرائية (لا يطبقها الكود) | — |
-| `notify.ts` الأصل ونسخه مطابقة | لا فحص آلي؛ `push.test.mjs` يختبر `_shared/notify.ts` فقط. تحقق يدوي: `md5sum supabase/functions/*/notify.ts supabase/functions/_shared/notify.ts` (متطابقة عند آخر تحقق) | مطبقة يدوياً |
+| `notify.ts` الأصل ونسخه مطابقة | فحص آلي في `.github/workflows/tests.yml` (md5 لكل `supabase/functions/*/notify.ts` مقابل `_shared/notify.ts`) · `push.test.mjs` يختبر `_shared/notify.ts` | مطبقة آلياً |
 
 ---
 
@@ -220,6 +220,7 @@
 - **SQL `call_edge`** — تستدعيه مهام cron لتشغيل `backup`, `fal-check`, `monthly-report`.
 - **cron `maqsad-warm`** — يدفئ `api` و`wa-webhook` كل ٤ دقائق.
 - **`app.js:call`** — كل نداءات التطبيق للخادم تمر منه (الثابت `API`)، والاستثناء `JOIN_API`.
+- **`.github/workflows/tests.yml`** — فحص GitHub التلقائي عند كل push وpull request: اختبارات الخادم `supabase/tests/*.test.mjs` · التطبيق (`app/build.py` ثم `test4.js`, `test5.js`, `v14.test.js`, `v15.test.js`, `admin.test.js`) · الموقع (`site/build.py` ثم `site/test/site.test.js`) · مطابقة نسخ `notify.ts` (md5) · منع `.env` والنصوص الشبيهة بالمفاتيح. أي اختبار جديد يُضاف هنا.
 - **`supabase/tests/harness.mjs`** — قاعدة وهمية و`fetch` وهمي لكل اختبارات الخادم (`makeDb`, `makeFetch`, `loadFunction`).
 
 ---
@@ -232,6 +233,7 @@
 - **مخزن `site` العام** في `02_functions_jobs.sql` (`public = true`)، بينما `docs/DEPLOY.md` يقول إنه صار خاصاً. تعارض بين الملفين يحتاج تحقق من القاعدة الحية.
 - **الدوال المتوقفة** (`fontkit`, `util-fontcss`, `publish`, `selfcheck`): حسب `docs/DEPLOY.md` ما زالت منشورة بانتظار الحذف؛ أصل بعضها في `archive/retired-functions/`، و`util-fontcss` بلا أصل في المستودع.
 - **`app_pages` ودوال `app`**: ما إذا كانت هناك slugs غير `app` في القاعدة الحية — غير مؤكد.
+- **`app/tests/test.js`, `test2.js`, `test3.js` قديمة**: تفشل لأنها تبحث عن عناصر لم تعد في الواجهة (مثل `#navOffices`)، وهي خارج الفحص التلقائي. تحتاج قرار صاحب المشروع: تحديث أو حذف.
 - **مطابقة الإنتاج**: الخريطة مبنية على المستودع فقط؛ لم يُقارن أي شيء بالنسخة الحية في هذه المهمة.
 
 ---
