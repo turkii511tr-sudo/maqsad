@@ -15,6 +15,8 @@
 
 ## طريقة العمل
 Inspect → Decide → Implement → Test → Commit. تغييرات صغيرة، كل دفعة commit برسالة عربية واضحة.
+- قبل أي مهمة اقرأ MAQSAD_MAP.md وابدأ من الفرع المناسب بدل فحص المشروع كاملاً.
+- أي تغيير في البنية أو إضافة كبيرة: حدّث القسم المتأثر في MAQSAD_MAP.md في نفس الـcommit.
 - واجهة التطبيق تُنشر عبر `tools/deploy/mkpatch.py` (حارس md5) ثم `select * from public.build_app();`.
 - بعد نشر أي دالة: `get_edge_function` ومطابقة الملفات حرفاً بحرف.
 - بعد أي تغيير في القاعدة: جرّب الدخول الحي (`login_start`).
