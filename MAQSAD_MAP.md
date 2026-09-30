@@ -1,6 +1,6 @@
 # خريطة مشروع مقصد — MAQSAD_MAP
 
-آخر تحقق: c288c141906e31c134a15890de0b5598c125ba9a — 2026-09-30
+آخر تحقق: b29f3d4c2e47225583283f607a41333a64adc0e1 — 2026-09-30
 
 خريطة ملاحة لـ Claude Code: من أين تبدأ، وما الذي تفتحه، وما الذي لا تحتاج أن تفتحه.
 المراجع بالاسم (ملف + دالة/جدول/action)، بلا أرقام أسطر. الكود الفعلي هو الحكم دائماً.
@@ -204,7 +204,7 @@
 | --- | --- | --- |
 | لا مفاتيح ولا `.env` في المستودع | `.gitignore` (يستثني `.env`, `.env.*`, `*.pem`, `*.key`, `secrets*.json`) · `.env.example` أسماء فقط · كل الدوال تقرأ `app_secrets` عبر `secrets()` · `backup.test.mjs` يفحص خلو ملف النسخة من المفاتيح | مطبقة (لا فحص آلي قبل الـ commit) |
 | لا يُعرض مكتب بلا رخصة فال | `wa:falState` + `wa:processIncoming` (لا رد ولا حفظ لعملاء مكتب `blocked` إلا المجرّبين `isTester`) · `wa:systemPrompt(licensed)` لا يذكر رقم الرخصة إن لم تكن سارية · `canList` يمنع عرض العقارات عند `expired` · `api:decorate` (`officeBlock`) · `fal-check` يوقف العرض عند الانتهاء | مطبقة |
-| لا يُعرض إعلان إلا على رقم صاحب العقار | الموجود: شرط ترخيص الإعلان فقط (`v_listable_properties`: `ad_license_no` + `ad_license_expiry >= current_date`، و`api:decorate`). عرض المالك يُسلَّم للوسيط (`owner_offer`) لترخيص إعلانه | **جزء "رقم صاحب العقار" غير مطبق في الكود**: لا يوجد عمود رقم مالك في `properties` ولا فحص له (انظر القسم 7) |
+| لا يُعرض عقار إلا بترخيص إعلان ساري (رقم + تاريخ انتهاء) | `v_listable_properties` (`ad_license_no` غير فارغ + `ad_license_expiry >= current_date`) ← `match_properties` · `api:decorate` (`listable`/`block_reason`). عرض المالك يُسلَّم للوسيط (`owner_offer`) لترخيص إعلانه | مطبقة |
 | واتساب الرسمي (Meta) فقط للإطلاق | `wa` يدعم ميتا (`handleMeta`, `metaSignatureOk`) · `api:office_save` يجعل `cloud` هو الافتراضي في الإدخال | **غير مطبقة في الكود**: UltraMsg ما زال مدعوماً في `wa:Deno.serve` و`wa:sendWhatsApp` و`api:sendWhatsApp`، والقيمة الافتراضية لعمود `offices.wa_provider` في `01_schema.sql` هي `ultramsg`. المنع حالياً إجرائي فقط |
 | لا إعادة كتابة ولا تغيير بنية | إجرائية (لا يطبقها الكود) | — |
 | `notify.ts` الأصل ونسخه مطابقة | لا فحص آلي؛ `push.test.mjs` يختبر `_shared/notify.ts` فقط. تحقق يدوي: `md5sum supabase/functions/*/notify.ts supabase/functions/_shared/notify.ts` (متطابقة عند آخر تحقق) | مطبقة يدوياً |
@@ -227,7 +227,7 @@
 ## 7. UNKNOWN / NEEDS VERIFICATION
 
 - **SQL `mint_magic`**: معرّفة في `02_functions_jobs.sql`، ولا يوجد أي مستدعٍ لها في المستودع. action `redeem` في `api` يستهلك جلسات `kind = 'magic'`، لكن مصدر إنشائها غير مؤكد (قد تكون تُستدعى يدوياً أو أصبحت قديمة).
-- **قاعدة "رقم صاحب العقار"**: المعنى المقصود غير مؤكد من الكود (هل المقصود رقم ترخيص الإعلان باسم المالك؟). لا يوجد حقل لرقم المالك؛ يحتاج قرار صاحب المشروع.
+- التحقق من صحة رقم ترخيص الإعلان لدى الهيئة غير موجود (مؤجل).
 - **رقم المنصة الرسمي**: `PLATFORM_WA_PHONE_ID`/`PLATFORM_WA_TOKEN`/`PLATFORM_WA_NUMBER` مذكورة في `docs/SECRETS.md` كمخططة وغير موجودة؛ لم يُتحقق من القاعدة الحية (ممنوع في هذه المهمة).
 - **مخزن `site` العام** في `02_functions_jobs.sql` (`public = true`)، بينما `docs/DEPLOY.md` يقول إنه صار خاصاً. تعارض بين الملفين يحتاج تحقق من القاعدة الحية.
 - **الدوال المتوقفة** (`fontkit`, `util-fontcss`, `publish`, `selfcheck`): حسب `docs/DEPLOY.md` ما زالت منشورة بانتظار الحذف؛ أصل بعضها في `archive/retired-functions/`، و`util-fontcss` بلا أصل في المستودع.
