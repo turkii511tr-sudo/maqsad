@@ -91,9 +91,13 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
 - **ميزانية الإيجار الشهرية**: `annual_budget()` تضرب الميزانية الشهرية (أو أي ميزانية إيجار أقل من ١٠ آلاف) في ١٢ قبل
   مقارنتها بأسعار المخزون السنوية، في `match_properties` و`match_customers`.
 
-## ١٠) تدقيق المنتج (٢ أكتوبر ٢٠٢٦) — api v16 وwa-webhook v5.2 وmigration 10
+## ١٠) تدقيق المنتج (٢ أكتوبر ٢٠٢٦) — api v16 وwa-webhook v5.3 وmigration 10
 
-**غير منشور بعد — يحتاج موافقة صاحب المشروع.** الترتيب مهم:
+**نُشر ٢ أكتوبر ٢٠٢٦ بموافقة صاحب المشروع:** migration 10 مطبّقة، `wa-webhook` نسخة ١٦ و`api` نسخة ١٦ (مطابقة حرفية بعد النشر)،
+`login_start` حي = 200، الواجهة md5 `5b73f9394ea8b55f8faf1c3f42446994` (مطابق لـ `app/build.py`).
+**الموقع لم يُرفع بعد:** شبكة بيئة العمل منعت الاتصال بنتليفاي؛ يُرفع `site/dist/` من لوحة نتليفاي أو من جهاز آخر.
+
+الترتيب المتّبع:
 
 1. `supabase/db/migrations/10_city_budget_matching.sql` (إضافات فقط: `customers.city`, `customers.stale_turns`, `ar_norm`,
    `match_properties_v2`، وتحديث `match_customers`، وتوحيد «بيع» ← «شراء» في `properties`). ثم جرّب `login_start` حياً.
