@@ -263,10 +263,10 @@ await test("v15 رقم المنصة يحفظه المشغّل ويُفحص", asy
 await test("حالة العقار: مؤجّر ومباع ومحجوز تُحفظ، وأي قيمة ثانية ترجع «متاح»", async () => {
   const { T, h } = await boot();
   for (const st of ["rented", "sold", "reserved"]) {
-    const r = await call(h, { action: "property_save", property: { title: "شقة " + st, district: "النرجس", state: st } }, "s2");
+    const r = await call(h, { action: "property_save", property: { title: "شقة " + st, city: "الرياض", district: "النرجس", state: st } }, "s2");
     assert.equal(r.status, 200); assert.equal(r.body.property.state, st);
   }
-  const r = await call(h, { action: "property_save", property: { title: "شقة", district: "النرجس", state: "hacked" } }, "s2");
+  const r = await call(h, { action: "property_save", property: { title: "شقة", city: "الرياض", district: "النرجس", state: "hacked" } }, "s2");
   assert.equal(r.body.property.state, "available");
 });
 
@@ -708,7 +708,7 @@ await test("v13: صاحب المكتب يضيف وسيط لمكتبه فقط، �
 
 await test("v14: عقار جديد يرجّع عدد العملاء السابقين المطابقين، وقائمتهم للمكتب نفسه فقط", async () => {
   const { T, h } = await boot((d) => { d.offices[1].active = true; d.__custMatches = [{ id: "c1", name: "عميل 1", phone: "966500000011", score: 60 }]; });
-  let r = await call(h, { action: "property_save", property: { title: "شقة", district: "النرجس", price: 42000, deal_type: "إيجار", property_type: "شقة" } }, "s2");
+  let r = await call(h, { action: "property_save", property: { title: "شقة", city: "الرياض", district: "النرجس", price: 42000, deal_type: "إيجار", property_type: "شقة" } }, "s2");
   assert.equal(r.status, 200); assert.equal(r.body.matches, 1);
   const pid = r.body.property.id;
   assert.equal(T.__custCalls[0].p_office, "o1"); assert.equal(T.__custCalls[0].p_days, 30);
@@ -739,6 +739,63 @@ await test("v14: موافقة صاحب المكتب على الشروط تُحف
   me = await call(h, { action: "me" }, "s2");
   assert.equal(me.body.office.terms.ok, true);
   assert.ok(T.events.some((e) => e.kind === "terms_accepted" && e.detail.version === v));
+});
+
+
+await test("v16 العقار الجديد بلا مدينة يُرفض، وبمدينة يُحفظ، و«بيع» تُحفظ «شراء»، و«حي» تُشال", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "property_save", property: { title: "فيلا", district: "حطين", price: 2e6, deal_type: "بيع", property_type: "فيلا" } }, "s2");
+  assert.equal(r.status, 400); assert.equal(r.body.error, "المدينة مطلوبة");
+  r = await call(h, { action: "property_save", property: { title: "فيلا", city: " الطائف ", district: "حي المنتزه", price: 2e6, deal_type: "بيع", property_type: "فيلا" } }, "s2");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const p = T.properties.at(-1);
+  assert.equal(p.city, "الطائف"); assert.equal(p.district, "المنتزه"); assert.equal(p.deal_type, "شراء");
+  // تعديل من نسخة تطبيق قديمة بلا مدينة: المدينة المحفوظة تبقى
+  r = await call(h, { action: "property_save", property: { id: p.id, title: "فيلا", district: "المنتزه", price: 1.9e6, deal_type: "شراء", property_type: "فيلا" } }, "s2");
+  assert.equal(r.status, 200); assert.equal(T.properties.at(-1).city, "الطائف");
+});
+
+await test("v16 تصحيح بيانات العميل: أي موظف، القيم تُتحقق، والتأهيل يُعاد حسابه بلا تسليم", async () => {
+  const { T, h } = await boot((d) => Object.assign(d.customers[0], { deal_type: "إيجار", property_type: "شقة",
+    location: "النرجس", budget: 45, budget_period: "سنوي", status: "qualified", mode: "auto" }));
+  let r = await call(h, { action: "lead_update", id: "c0", fields: { budget: "٤٥٠٠٠", city: "الرياض" } }, "s2");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const c = T.customers.find((x) => x.id === "c0");
+  assert.equal(c.budget, 45000); assert.equal(c.city, "الرياض"); assert.equal(c.status, "qualified"); assert.equal(c.mode, "auto");
+  assert.ok(T.events.some((e) => e.kind === "lead_edited" && e.detail.fields.includes("budget")));
+  r = await call(h, { action: "lead_update", id: "c0", fields: { deal_type: "hacked" } }, "s2");
+  assert.equal(r.status, 400);
+  r = await call(h, { action: "lead_update", id: "c0", fields: { budget: "" } }, "s2");
+  assert.equal(c.budget, null); assert.equal(c.status, "inquiry");
+  // عميل مكتب ثاني ما يُعدّل
+  T.customers.push({ id: "x1", office_id: "o2", phone: "966511" });
+  r = await call(h, { action: "lead_update", id: "x1", fields: { name: "س" } }, "s2");
+  assert.equal(r.status, 404);
+});
+
+await test("v16 حذف العميل: صاحب المكتب فقط، يحذف المحادثة، ويبقى إثبات بلا رقم", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "lead_delete", id: "c1" }, "s2");
+  assert.equal(r.status, 403, "الوسيط حذف عميلاً");
+  const before = T.messages.filter((m) => m.customer_id === "c1").length;
+  assert.ok(before > 0);
+  r = await call(h, { action: "lead_delete", id: "c1" }, "s1");
+  assert.equal(r.status, 200);
+  assert.ok(!T.customers.some((c) => c.id === "c1"));
+  assert.equal(T.messages.filter((m) => m.customer_id === "c1").length, 0, "الرسائل بقيت يتيمة");
+  const pr = T.privacy_requests.at(-1);
+  assert.equal(pr.kind, "delete_customer"); assert.equal(pr.detail.via, "office_app");
+  assert.ok(!JSON.stringify(pr).includes("966500000001".slice(0, 6) + "000001"), "رقم خام في الإثبات");
+  r = await call(h, { action: "lead_delete", id: "c1" }, "s1");
+  assert.equal(r.status, 404);
+});
+
+await test("v16 قائمة المكاتب: «واتساب مربوط» يحتاج رمز الوصول، والرمز ما يطلع للواجهة", async () => {
+  const { h } = await boot((d) => { d.offices[1].wa_token = null; });
+  const r = await call(h, { action: "offices_list" }, "sa");
+  const [a, b] = r.body.offices;
+  assert.equal(a.wa_linked, true); assert.equal(b.wa_linked, false);
+  assert.ok(!JSON.stringify(r.body).includes("EAA"), "رمز الوصول طلع للواجهة");
 });
 
 for (const r of results) console.log(r.join("  "));

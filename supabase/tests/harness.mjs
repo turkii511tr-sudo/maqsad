@@ -116,7 +116,12 @@ export function makeDb(seed) {
     (T.__finishTurn ??= []).push({ consumed: k, left });
     return left;
   };
-  rpcs.match_properties = () => T.__matches ?? [];
+  rpcs.match_properties = (a) => { (T.__matchCalls ??= []).push({ fn: "v1", ...a }); return T.__matches ?? []; };
+  rpcs.match_properties_v2 = (a) => {
+    (T.__matchCalls ??= []).push({ fn: "v2", ...a });
+    if (T.__noV2) throw Object.assign(new Error("function match_properties_v2 does not exist"), { v2: true });
+    return T.__matches ?? [];
+  };
   rpcs.match_customers = (a) => { (T.__custCalls ??= []).push(a); return (T.__custMatches ?? []).filter((c) => c.office_id === undefined || c.office_id === a.p_office); };
   // عدّادات الاستهلاك والإحصاءات: نسجّل النداء ونعيد ما يحدده الاختبار
   rpcs.bump_usage = (a) => { (T.__usage ??= []).push(a); return null; };
@@ -127,7 +132,10 @@ export function makeDb(seed) {
     T,
     client: {
       from: (t) => new Q(t),
-      rpc: async (name, args) => ({ data: rpcs[name](args), error: null }),
+      rpc: async (name, args) => {
+        try { return { data: rpcs[name](args), error: null }; }
+        catch (e) { if (e.v2) return { data: null, error: { message: e.message } }; throw e; }
+      },
     },
   };
 }

@@ -1,6 +1,6 @@
 # خريطة مشروع مقصد — MAQSAD_MAP
 
-آخر تحقق: b29f3d4c2e47225583283f607a41333a64adc0e1 — 2026-09-30
+آخر تحقق: 5b1e24c (+ تغييرات تدقيق المنتج) — 2026-10-02
 
 خريطة ملاحة لـ Claude Code: من أين تبدأ، وما الذي تفتحه، وما الذي لا تحتاج أن تفتحه.
 المراجع بالاسم (ملف + دالة/جدول/action)، بلا أرقام أسطر. الكود الفعلي هو الحكم دائماً.
@@ -24,10 +24,13 @@
 | --- | --- | --- |
 | العميل / الطلب / المحادثة | B1 محرك واتساب، B3 شاشة العملاء | `wa-webhook/index.ts` (`processIncoming`, `processTurn`) · جدول `customers`, `messages` · `app.js` (`renderLeads`, `openLead`) |
 | العميل المؤهل / ينتظر اتصالك | B1، B3 | `wa-webhook/index.ts` (`handoff`) · `app.js` (`isQualified`, `needsCall`, `renderToday`) |
+| تصحيح بيانات العميل / حذف العميل | B3 | `api` actions `lead_update`, `lead_delete` · `app.js` (`openLeadEdit`, `askLeadDelete`) |
+| الميزانية الغامضة («45») / حد الحماية / محادثة ما تتقدم | B1 | `wa` (`budgetDoubt`, `DAILY_REPLY_CAP`, `STUCK_TURNS`) · عمود `customers.stale_turns` |
+| المدينة | B1، B5 | `properties.city` · `customers.city` · `wa` (`cityList`, `inventoryText`) · SQL `match_properties_v2`, `ar_norm` |
 | نتيجة الاتصال | B3 | `api` action `lead_outcome` · `app.js` (`outcomeNote`, `outcomeTag`) |
 | الوضع اليدوي / التدخل | B1، B3 | `api` action `set_mode` · عمود `customers.mode` |
 | إيقاف الرسائل / «ابدأ» | B1 | `wa-webhook/index.ts` (`commandOf`) · `customers.opted_out` |
-| المكتب | B4 إدارة المكاتب | جدول `offices` · `api` actions `office_save`, `offices_list` · `app.js` (`renderOffices`, `openOffice`) |
+| المكتب / حالة المكتب / يحتاج إجراء | B4 إدارة المكاتب | جدول `offices` · `api` actions `office_save`, `offices_list` (`wa_linked`) · `app.js` (`officeStatus`, `renderOffices`, `openOffice`) |
 | العقار / المخزون | B5 العقارات والمطابقة | جدول `properties` · `api` actions `properties`, `property_save` · `app.js` (`renderStock`, `openProp`, `openPropWizard`) |
 | الإعلان / ترخيص الإعلان | B5 | `properties.ad_license_no`, `ad_license_expiry` · view `v_listable_properties` · `api` (`decorate`) |
 | المطابقة / عقارات مناسبة | B5 | SQL `match_properties`, `match_customers`, `annual_budget` · `api` action `prop_matches` |
@@ -56,12 +59,14 @@
 ### B1 — محرك واتساب (تأهيل العملاء)
 - **الوظيفة**: يستقبل رسائل العملاء، يفهمها بالذكاء الاصطناعي، يرد، ويسلّم العميل المؤهل للمكتب.
 - **نقطة الدخول**: `wa` → `Deno.serve` (GET = تحقق ميتا، POST بتوقيع `x-hub-signature-256` = ميتا عبر `handleMeta`، POST بـ `?k=` = UltraMsg).
-- **الدوال الأساسية**: `handleMeta`, `cloudOffice`, `processIncoming`, `processTurn`, `commandOf`, `askAI`, `callModel`, `systemPrompt`, `aiUserPrompt`, `maskText`/`unmask`/`unmaskAI`, `nextQuestion`, `formatProperties`, `handoff`, `sendWhatsApp`, `notifyOffice`, `handleVoice`, `mediaNudge`, `metaSignatureOk`.
-- **الجداول / SQL**: `customers`, `messages`, `events`, `offices`, `staff`, `privacy_requests` · `ingest_message`, `finish_turn`, `finish_processing`, `match_properties`, `bump_usage`.
+- **الدوال الأساسية**: `handleMeta`, `cloudOffice`, `processIncoming`, `processTurn`, `commandOf`, `askAI`, `callModel`, `systemPrompt`, `aiUserPrompt`, `recentHistory`, `officeInventory`/`inventoryText`/`cityList`, `budgetDoubt`/`bareNumbers`, `matchProperties`, `saveCustomer`, `maskText`/`unmask`/`unmaskAI`, `nextQuestion`, `formatProperties`, `handoff`, `sendWhatsApp`, `notifyOffice`, `handleVoice`, `mediaNudge`, `metaSignatureOk`.
+- **التسليم للوسيط** (v5.2) بحالة الطلب لا بعدد الرسائل: اكتمال الطلب (`qualified`) · كلمة موظف أو حكم الذكاء (`human`) · طلب معاينة (`human`، route `viewing_handoff`) · مالك يعرض (`owner_offer`) · تعذّر الذكاء (`ai_error`) · حماية فقط (`quota`): `STUCK_TURNS` ردود بلا معلومة جديدة، أو `max(msg_quota, DAILY_REPLY_CAP)` رداً آلياً خلال ٢٤ ساعة. العميل الراجع بطلب مكتمل (`handed_at` + `qualified`) يُسأل «نفس طلبك السابق؟» ولا يُسلّم إلا إذا أكد (`same_request`) أو غيّر.
+- **ما يصل للذكاء**: السياق المسجل + آخر ٨ رسائل (`recentHistory`) + مخزون المكتب المرخّص كأحياء ونطاق أسعار (`v_listable_properties`، فقط إذا فال سارية) + نطاق المدن. كل ذلك يمر بالإخفاء.
+- **الجداول / SQL**: `customers`, `messages`, `events`, `offices`, `staff`, `privacy_requests`, view `v_listable_properties` · `ingest_message`, `finish_turn`, `finish_processing`, `match_properties_v2` (ويرجع لـ `match_properties` إذا ما انشرت migration 10), `bump_usage`.
 - **تكاملات**: Meta Graph API، UltraMsg (انتقالي)، OpenAI (فهم + تحويل صوت).
 - **يعتمد على**: B5 (المطابقة)، B6 (`falState`)، B8 (`notify.ts`)، B2 (`handleLogin` لرسائل الدخول).
 - **متى تنتقل**: رسالة «دخول مقصد» ← B2 · عرض العقارات ← B5 · تنبيه المكتب ← B8 · حجب بسبب فال ← B6.
-- **الاختبار**: `node supabase/tests/wa.test.mjs` · جودة الإخفاء: `docs/PRIVACY_EVAL.md` (يدوي حي).
+- **الاختبار**: `node supabase/tests/wa.test.mjs` · سلوك المبيعات (الميزانية، المخزون، المدينة، العميل الراجع، التسليم): `node supabase/tests/wa_sales.test.mjs` · جودة الإخفاء: `docs/PRIVACY_EVAL.md` (يدوي حي).
 - **النشر**: `supabase functions deploy wa-webhook --no-verify-jwt` مع `notify.ts`، ثم `get_edge_function` ومطابقة حرفية.
 - **الخطورة**: **عالية** — يرد على عملاء حقيقيين، ويرسل بيانات للذكاء الاصطناعي (الإخفاء إلزامي)، وأي عطل يوقف عمل كل المكاتب.
 
@@ -78,18 +83,19 @@
 
 ### B3 — شاشة العملاء في التطبيق
 - **الوظيفة**: قائمة العملاء وبطاقة العميل، «ينتظر اتصالك»، تسجيل نتيجة الاتصال، الوضع اليدوي/الآلي.
-- **نقطة الدخول**: `app.js` → `renderToday`, `renderLeads`, `openLead` (الشاشات `s-today`, `s-leads`) ← `api` actions `bootstrap`, `leads`, `lead`, `lead_outcome`, `set_mode`.
+- **نقطة الدخول**: `app.js` → `renderToday`, `renderLeads`, `openLead`, `openLeadEdit`, `askLeadDelete` (الشاشات `s-today`, `s-leads`) ← `api` actions `bootstrap`, `leads`, `lead`, `lead_outcome`, `set_mode`, `lead_update`, `lead_delete` (صاحب المكتب فقط؛ حذف فعلي، الرسائل تُحذف معه، وإثبات في `privacy_requests`).
 - **الدوال**: `app.js`: `isQualified`, `needsCall`, `journey`, `handoffOf`, `outcomeNote`, `leadMatches`, `paintAttn`.
 - **الجداول**: `customers`, `messages`, `events`.
 - **يعتمد على**: B2 (جلسة)، B1 (يملأ البيانات).
-- **الاختبار**: `node app/tests/test4.js` · `node supabase/tests/api.test.mjs`.
+- **الاختبار**: `node app/tests/test4.js` · `node app/tests/v16.test.js` · `node supabase/tests/api.test.mjs`.
 - **النشر**: الواجهة ← B13؛ الخادم ← `api`.
 - **الخطورة**: متوسطة — يعرض بيانات عملاء شخصية؛ الصلاحية بـ `office_id` داخل `api`.
 
 ### B4 — إدارة المكاتب (لوحة المشغّل)
 - **الوظيفة**: إنشاء/تعديل المكاتب، الدخول لمكتب، سجل تعديلات المدير، إعدادات المنصة.
 - **نقطة الدخول**: `app.js` → `renderOffices`, `openOffice`, `switchOffice`, `exitOffice`, `renderPlatform` (الشاشات `s-offices`, `s-platform`) ← `api` actions `offices_list`, `office_save`, `admin_log`, `platform_save`, `save_settings`, `test_whatsapp`, `settings_status`.
-- **الدوال**: `api`: `officesFor`, `statusFor`, `logAdmin`, `sendWhatsApp` · `app.js`: `officeIssues`, `officeMatches`, `renderSettings`, `saveAi`, `loadAdminLog`.
+- **الدوال**: `api`: `officesFor` (`wa_linked` = معرّف + رمز وصول)، `statusFor`, `logAdmin`, `sendWhatsApp` · `app.js`: `officeStatus` (شغّال / يحتاج إجراء بأسبابه / موقوف؛ الشروط والمزود الانتقالي وقرب انتهاء فال ملاحظات لا توقف)، `officeIssues`, `officeMatches`, `renderSettings`, `saveAi`, `loadAdminLog`.
+- **UltraMsg في الواجهة**: خيار المزود مخفي للمكتب الجديد، ويظهر فقط لمكتب مربوط عليه حالياً (حتى لا يتحول بالغلط). الدعم في الخادم باقٍ.
 - **الجداول**: `offices`, `staff`, `app_secrets`, `events`.
 - **يعتمد على**: B2 (دور `super_admin` = `isSuper`)، B6.
 - **الاختبار**: `node app/tests/admin.test.js` · `node app/tests/test3.js` · `api.test.mjs`.
@@ -98,10 +104,10 @@
 ### B5 — العقارات والمطابقة
 - **الوظيفة**: مخزون المكتب، إضافة عقار بخطوات، شرط ترخيص الإعلان، مطابقة العملاء بالعقارات.
 - **نقطة الدخول**: `app.js` → `renderStock`, `openProp`, `openPropWizard`, `openPropMatches` (الشاشة `s-stock`) ← `api` actions `properties`, `property_save`, `prop_matches`؛ ومن B1 → `processTurn` ← `match_properties`.
-- **الدوال**: `api`: `decorate` (يحسب `listable`/`block_reason`) · `app.js`: `propMatches`, `matchWaText`, `openMatchesPrompt`.
-- **الجداول / SQL**: `properties` · view `v_listable_properties` · `match_properties`, `match_customers`, `annual_budget`.
+- **الدوال**: `api`: `decorate` (يحسب `listable`/`block_reason`)، `property_save` (المدينة إلزامية للجديد، «بيع» ← «شراء») · `app.js`: `propMatches`, `propCities`, `defaultCity`, `cityOptions`, `matchWaText`, `openMatchesPrompt`.
+- **الجداول / SQL**: `properties` · view `v_listable_properties` · `match_properties_v2` (فترة الميزانية + المدينة + «بيع»=«شراء» + تطبيع الحي `ar_norm`)، `match_properties` (قديمة، للنسخة المنشورة)، `match_customers`, `annual_budget`.
 - **يعتمد على**: B6 (مكتب بلا فال سارية لا تُعرض عقاراته).
-- **الاختبار**: `wa.test.mjs` (المطابقة في المحادثة) · `node app/tests/v14.test.js` · `api.test.mjs`.
+- **الاختبار**: `wa.test.mjs`, `wa_sales.test.mjs` (المطابقة في المحادثة) · `node app/tests/v14.test.js`, `v16.test.js` · `api.test.mjs` · SQL محلياً على Postgres (انظر `docs/DEPLOY.md`).
 - **النشر**: SQL ← `supabase/db/migrations/` + تحديث `02_functions_jobs.sql`؛ الواجهة ← B13.
 - **الخطورة**: متوسطة — خطأ في الـ view يعرض إعلاناً بلا ترخيص (مخالفة نظامية).
 
@@ -183,14 +189,15 @@
 1. **رسالة عميل (ميتا)**: `wa:Deno.serve` → `wa:metaSignatureOk` → `wa:handleMeta` → `wa:cloudOffice` → `wa:processIncoming` → SQL `ingest_message` → `messages` → `wa:processTurn` → `wa:askAI` → `wa:sendWhatsApp` → SQL `finish_turn` → `customers`.
 2. **رسالة عميل (UltraMsg)**: `wa:Deno.serve` (`?k=WEBHOOK_SECRET`) → `offices` (`wa_instance_key`) → `wa:processIncoming` → (كما في 1).
 3. **حجب فال**: `wa:processIncoming` → `wa:falState` = blocked → `wa:isTester` → `wa:falBlockedNotice` → `events` (`fal_blocked`) → `notify.ts:alertOffice`.
-4. **عميل مؤهل**: `wa:processTurn` → `canList` → SQL `match_properties` → `v_listable_properties` → `wa:handoff("qualified")` → `wa:notifyOffice` → `notify.ts:alertOffice` → `push_subs` / تيليجرام.
+4. **عميل مؤهل**: `wa:processTurn` → `canList` → `wa:officeInventory` (سياق الذكاء) → `wa:askAI` → `wa:budgetDoubt` → `wa:matchProperties` → SQL `match_properties_v2` → `v_listable_properties` → `wa:handoff("qualified")` → `wa:notifyOffice` → `notify.ts:alertOffice` → `push_subs` / تيليجرام.
 5. **عرض مالك**: `wa:processTurn` (`offering`) → `wa:handoff("owner_offer")` → `wa:notifyOffice`.
 6. **دخول بواتساب**: `app.js:startWaLogin` → `api:handle` (`login_start`) → `login_requests` → الموظف يرسل «دخول مقصد» → `wa:isLoginMsg` → `wa:handleLogin` → `login_requests` → `app.js:pollLogin` → `api` (`login_poll`) → `api:newSession` → `sessions`.
 7. **دخول بالبصمة**: `app.js:pkLogin` → `api` (`pk_login_options`) → `auth_challenges` → `api` (`pk_login_verify`) → `api:verifySig` → `passkeys` → `sessions`.
 8. **كل طلب من التطبيق**: `app.js:call` → `api:handle` → `api:session` → `sessions`/`staff`/`offices` → `switch (action)`.
 9. **اعتماد فال**: `app.js:falPanel` → `api` (`fal_verify`) → `offices.fal_*` + `fal_checks` + `events` ؛ الرفض `fal_reject`.
 10. **تذكير فال اليومي**: cron `maqsad-fal-check` → SQL `call_edge('fal-check')` → `fal-check:Deno.serve` → `stageOf` → `offices.fal_reminded` + `events` → `notify.ts:alertOffice`.
-11. **حفظ عقار**: `app.js:openPropWizard` → `api` (`property_save`) → `properties` → SQL `match_customers` → `app.js:openMatchesPrompt`.
+11. **حفظ عقار**: `app.js:openPropWizard` (المدينة إلزامية) → `api` (`property_save`) → `properties` → SQL `match_customers` → `app.js:openMatchesPrompt`.
+16. **تصحيح/حذف عميل**: `app.js:openLeadEdit` → `api` (`lead_update`) → `customers` · `app.js:askLeadDelete` → `api` (`lead_delete`) → حذف `customers` (و`messages` بالـ cascade) → `privacy_requests` + `events`.
 12. **انضمام مكتب**: `site.js` (`#joinForm`) أو `app.js:openSignup` → `join:Deno.serve` → مخزن `fal-proofs` + `signup_requests` → `join:tell` (تيليجرام المشغّل) → `api` (`signup_list`/`signup_update`).
 13. **نشر الواجهة**: `tools/deploy/mkpatch.py` → `app_sources` → SQL `build_app` → `app_pages` → `app:Deno.serve` → `pwa/index.html`.
 14. **صيانة يومية**: cron `maqsad-housekeeping` → SQL `housekeeping` → حذف من `sessions`, `otps`, `login_requests`, `auth_challenges`, `login_audit`, `events`, `backup_runs`, `signup_requests`, `contact_messages`… (ونص الرسائل حسب المدة).
@@ -232,7 +239,9 @@
 - **مخزن `site` العام** في `02_functions_jobs.sql` (`public = true`)، بينما `docs/DEPLOY.md` يقول إنه صار خاصاً. تعارض بين الملفين يحتاج تحقق من القاعدة الحية.
 - **الدوال المتوقفة** (`fontkit`, `util-fontcss`, `publish`, `selfcheck`): حسب `docs/DEPLOY.md` ما زالت منشورة بانتظار الحذف؛ أصل بعضها في `archive/retired-functions/`، و`util-fontcss` بلا أصل في المستودع.
 - **`app_pages` ودوال `app`**: ما إذا كانت هناك slugs غير `app` في القاعدة الحية — غير مؤكد.
-- **مطابقة الإنتاج**: الخريطة مبنية على المستودع فقط؛ لم يُقارن أي شيء بالنسخة الحية في هذه المهمة.
+- **مطابقة الإنتاج**: حتى ٢ أكتوبر ٢٠٢٦ المنشور هو api v15 وwa-webhook v15؛ تغييرات v16/v5.2 وmigration 10 في المستودع فقط بانتظار موافقة النشر.
+- **عقارات بمدينة «الرياض» قبل migration 10**: القيمة جاءت من القيمة الافتراضية للعمود لا من اختيار المكتب. لم تُغيَّر (لا تخمين). القيمة الافتراضية للعمود باقية حتى تُنشر `api` v16 (حذفها قبلها يكسر إضافة العقار).
+- **إعادة فتح محادثة مُسلّمة تلقائياً** (عميل `manual` يرجع بعد أيام بلا رد من المكتب): غير موجودة — البوت صامت وينبّه الوسيط. قرار تجاري معلق عند صاحب المشروع.
 
 ---
 

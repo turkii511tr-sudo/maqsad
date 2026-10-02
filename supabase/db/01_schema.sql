@@ -101,7 +101,9 @@ create table public.customers (
   outcome text,
   outcome_at timestamp with time zone,
   first_outcome_at timestamp with time zone,
-  outcome_by uuid
+  outcome_by uuid,
+  city text,
+  stale_turns integer not null default 0
 );
 
 create table public.events (

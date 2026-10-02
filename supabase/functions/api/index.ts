@@ -1,4 +1,7 @@
-// مقصد — واجهة المنصة (v15)
+// مقصد — واجهة المنصة (v16)
+// v16: المدينة إلزامية للعقار الجديد وتُحفظ (كانت تُترك للافتراضي «الرياض»)، و«بيع» تُحفظ «شراء» مثل طلب العميل ·
+//      تصحيح بيانات العميل من بطاقته (lead_update) وحذفه نهائياً مع محادثته (lead_delete، لصاحب المكتب) ·
+//      «واتساب مربوط» للمكتب = معرّف + رمز وصول (كان المعرّف وحده)
 // v15: الدخول بلا رسائل رموز مدفوعة — أول مرة برسالة «دخول مقصد ١٢٣٤» يرسلها الموظف من واتسابه (لرقم المنصة
 //      أو رقم مكتبه)، وبعدها بالبصمة (Passkeys، تحقق كامل بلا مكتبات). احتياط: رمز لمرة وحدة من المدير أو على
 //      تيليجرام المدير. جلسة الموظف ٩٠ يوماً، والخروج من الجهاز الحالي فقط
@@ -443,7 +446,7 @@ async function bump(officeId: string | null | undefined, f: Record<string, numbe
 
 const OUTCOMES = ["no_answer", "contacted", "viewing", "deal", "lost"];
 const PROP_STATES = ["available", "reserved", "rented", "sold", "closed"];
-const LEAD_COLS = "id,name,phone,deal_type,property_type,budget,budget_period,location,rooms,status,mode," +
+const LEAD_COLS = "id,name,phone,deal_type,property_type,city,budget,budget_period,location,rooms,status,mode," +
   "summary,msg_count,last_message_at,opted_out,handoff_reason,handed_at,outcome,outcome_at";
 
 // الشهر بتوقيت الرياض (UTC+3 ثابت، بلا توقيت صيفي): «YYYY-MM» ← بدايته وبداية الشهر اللي بعده
@@ -502,7 +505,7 @@ const TERMS_VERSION = "2026-09-26";
 
 async function officesFor() {
   const { data } = await db.from("offices")
-    .select("id,code,name,license_no,wa_number,wa_provider,wa_instance,active,msg_quota,telegram_chat_id," +
+    .select("id,code,name,license_no,wa_number,wa_provider,wa_instance,wa_token,active,msg_quota,telegram_chat_id," +
             "fal_status,fal_expires_on,fal_holder_name,fal_verified_at,fal_note,fal_proof_path," +
             "fal_signup_proof,fal_request,onboarded_at,created_at,terms_version,terms_accepted_at")
     .order("created_at");
@@ -512,10 +515,11 @@ async function officesFor() {
       .select("id", { count: "exact", head: true }).eq("office_id", o.id);
     const { count: props } = await db.from("properties")
       .select("id", { count: "exact", head: true }).eq("office_id", o.id);
+    // الرمز نفسه ما يطلع للواجهة؛ يكفي نعرف أنه مضبوط
     const { fal_status, fal_expires_on, fal_holder_name, fal_verified_at, fal_note, fal_proof_path,
-            fal_signup_proof, fal_request, ...rest } = o;
+            fal_signup_proof, fal_request, wa_token, ...rest } = o;
     return {
-      ...rest, wa_linked: !!o.wa_instance, leads, props, fal: falInfo(o),
+      ...rest, wa_linked: !!o.wa_instance && isSet(wa_token), leads, props, fal: falInfo(o),
       voice: voice.has("*") || voice.has(String(o.code).toUpperCase()),
       has_signup_proof: !!fal_signup_proof,
       fal_request: fal_request ? { note: fal_request.note ?? null, at: fal_request.at, by: fal_request.by ?? null } : null,
@@ -1263,6 +1267,68 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       return json({ ok: true, mode: data?.mode ?? mode });
     }
 
+    // ===== تصحيح بيانات العميل: أي موظف في المكتب (الذكاء قد يسجّل شيئاً خطأ) =====
+    case "lead_update": {
+      const { data: cur } = await db.from("customers").select("*")
+        .eq("office_id", oid).eq("id", b.id).maybeSingle();
+      if (!cur) return json({ error: "not_found" }, 404);
+      const f = b.fields ?? {};
+      const txt = (v: unknown) => { const t = String(v ?? "").trim(); return t === "" ? null : t.slice(0, 200); };
+      const patch: Record<string, unknown> = {};
+      const pick = (k: string, ok: string[] | null) => {
+        if (!(k in f)) return null;
+        const v = txt(f[k]);
+        if (v !== null && ok && !ok.includes(v)) return `قيمة غير معروفة: ${v}`;
+        patch[k] = v; return null;
+      };
+      const bad = pick("name", null) ?? pick("deal_type", ["إيجار", "شراء", "عرض عقار"]) ??
+        pick("property_type", ["شقة", "فيلا", "دور", "أرض", "محل"]) ?? pick("city", null) ??
+        pick("location", null) ?? pick("budget_period", ["شهري", "سنوي"]) ?? pick("appointment", null);
+      if (bad) return json({ error: bad }, 400);
+      if ("budget" in f) {
+        const n = Number(String(f.budget ?? "").replace(/[٠-٩]/g, (x) => String("٠١٢٣٤٥٦٧٨٩".indexOf(x))).replace(/[^\d.]/g, ""));
+        patch.budget = n > 0 ? n : null;
+      }
+      if ("rooms" in f) {
+        const n = parseInt(String(f.rooms ?? ""), 10);
+        patch.rooms = n > 0 && n < 50 ? n : null;
+      }
+      if (!Object.keys(patch).length) return json({ error: "ما فيه تعديل" }, 400);
+      // نفس قاعدة التأهيل في المساعد؛ التصحيح ما يسلّم العميل ولا يرسل له شيئاً
+      const before = { ...cur };
+      const m = { ...cur, ...patch };
+      const complete = m.deal_type && m.deal_type !== "عرض عقار" && m.property_type && m.location && m.budget &&
+        !(m.deal_type === "إيجار" && !m.budget_period);
+      patch.status = complete ? "qualified" : "inquiry";
+      const { data, error } = await db.from("customers").update(patch)
+        .eq("office_id", oid).eq("id", b.id).select(LEAD_COLS).maybeSingle();
+      if (error || !data) return json({ error: "تعذّر الحفظ" }, 400);
+      changed = Object.keys(patch).filter((k) => k !== "status" && String(before[k] ?? "") !== String(patch[k] ?? ""));
+      await db.from("events").insert({ office_id: oid, kind: "lead_edited",
+        detail: { by: ctx.staff.name, customer: b.id, fields: changed } });
+      return json({ ok: true, lead: data });
+    }
+
+    // ===== حذف العميل نهائياً: صاحب المكتب فقط =====
+    // نفس أثر «احذف بياناتي» من واتساب: العميل ومحادثته (الرسائل تُحذف معه في القاعدة)، ويبقى إثبات بلا رقم.
+    // إذا راسل المكتب لاحقاً يبدأ كعميل جديد بلا أي بيانات سابقة
+    case "lead_delete": {
+      if (!isOwner) return json({ error: "الحذف لصاحب المكتب فقط" }, 403);
+      const { data: cur } = await db.from("customers").select("id,phone")
+        .eq("office_id", oid).eq("id", b.id).maybeSingle();
+      if (!cur) return json({ error: "not_found" }, 404);
+      const { error } = await db.from("customers").delete().eq("office_id", oid).eq("id", b.id);
+      if (error) return json({ error: "تعذّر الحذف" }, 500);
+      const last4 = String(cur.phone ?? "").slice(-4);
+      await db.from("privacy_requests").insert({
+        office_id: oid, kind: "delete_customer", status: "done", staff_id: ctx.staff.id,
+        closed_at: new Date().toISOString(), detail: { last4, via: "office_app", by: ctx.staff.name },
+      });
+      await db.from("events").insert({ office_id: oid, kind: "lead_deleted",
+        detail: { by: ctx.staff.name, last4 } });
+      return json({ ok: true });
+    }
+
     case "properties": {
       const { data } = await db.from("properties").select("*")
         .eq("office_id", oid).order("created_at", { ascending: false });
@@ -1271,18 +1337,24 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
 
     case "property_save": {
       const p = b.property ?? {};
-      const row = {
+      const city = String(p.city ?? "").trim().replace(/^مدينة\s+/, "");
+      const row: Record<string, unknown> = {
         office_id: oid,
         title: String(p.title ?? "").trim(),
-        deal_type: p.deal_type ?? "إيجار",
+        // التطبيق يسمي البيع «شراء» (نفس قيمة طلب العميل)؛ «بيع» من مصادر قديمة تُوحَّد
+        deal_type: p.deal_type === "بيع" ? "شراء" : (p.deal_type ?? "إيجار"),
         property_type: p.property_type ?? "شقة",
-        district: String(p.district ?? "").trim(),
+        district: String(p.district ?? "").trim().replace(/^حي\s+/, ""),
         price: Number(p.price) || 0,
         rooms: p.rooms ? Number(p.rooms) : null,
         state: PROP_STATES.includes(p.state) ? p.state : "available",
         ad_license_no: p.ad_license_no ? String(p.ad_license_no).trim() : null,
         ad_license_expiry: p.ad_license_expiry || null,
       };
+      // نفس اسم الحي موجود في أكثر من مدينة: العقار الجديد ما يُحفظ بلا مدينة.
+      // التعديل بلا مدينة (نسخة تطبيق قديمة) يُبقي المدينة المحفوظة كما هي
+      if (city) row.city = city;
+      else if (!p.id) return json({ error: "المدينة مطلوبة" }, 400);
       if (!row.title || !row.district) return json({ error: "الاسم والحي مطلوبان" }, 400);
       const res = p.id
         ? await db.from("properties").update(row).eq("office_id", oid).eq("id", p.id).select().maybeSingle()
@@ -1622,7 +1694,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
 const ADMIN_LOGGED = new Set([
   "office_save", "staff_save", "staff_delete", "fal_verify", "fal_reject", "fal_request_close",
   "signup_update", "save_settings", "platform_save", "property_save", "lead_outcome", "set_mode",
-  "notify_save", "tg_unlink",
+  "notify_save", "tg_unlink", "lead_update", "lead_delete",
 ]);
 const ACTION_AR: Record<string, string> = {
   office_save: "بيانات المكتب", staff_save: "موظف", staff_delete: "حذف موظف",
@@ -1630,6 +1702,7 @@ const ACTION_AR: Record<string, string> = {
   signup_update: "طلب انضمام", save_settings: "إعدادات الربط", platform_save: "إعدادات المنصة",
   property_save: "عقار", lead_outcome: "نتيجة اتصال", set_mode: "وضع محادثة",
   notify_save: "التنبيهات", tg_unlink: "فصل تيليجرام",
+  lead_update: "تصحيح بيانات عميل", lead_delete: "حذف عميل",
 };
 // إعدادات تخص المنصة كلها (مو مكتب بعينه)
 const PLATFORM_ACTIONS = new Set(["platform_save", "signup_update"]);
