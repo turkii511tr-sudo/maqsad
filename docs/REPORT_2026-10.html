@@ -1,0 +1,229 @@
+<title>تقرير تعديلات مقصد</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&family=Reem+Kufi:wght@600;700&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: one centered reading column; every change is a before/after pair; Arabic first, English in its own block at the end */
+:root{
+  --bg:#f3f5f4; --paper:#ffffff; --ink:#15211e; --ink-2:#4a5a55; --line:#dbe3e0;
+  --accent:#0f5c4d; --accent-soft:#e1efeb;
+  --before:#9a5b12; --before-soft:#f8eedf;
+  --wait:#6b4fa3; --wait-soft:#eee8f8;
+  --f-display:"Reem Kufi","IBM Plex Sans Arabic",Tahoma,sans-serif;
+  --f-ar:"IBM Plex Sans Arabic",Tahoma,"Segoe UI",sans-serif;
+  --f-en:"IBM Plex Sans","Segoe UI",Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1513; --paper:#17201d; --ink:#e7eeeb; --ink-2:#a3b3ae; --line:#2a3632;
+  --accent:#5cc4a9; --accent-soft:#183a32; --before:#e2a95c; --before-soft:#3a2c17;
+  --wait:#b9a2ea; --wait-soft:#2c2540; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1513; --paper:#17201d; --ink:#e7eeeb; --ink-2:#a3b3ae; --line:#2a3632;
+  --accent:#5cc4a9; --accent-soft:#183a32; --before:#e2a95c; --before-soft:#3a2c17;
+  --wait:#b9a2ea; --wait-soft:#2c2540; color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ar);font-size:17px;line-height:1.9}
+.wrap{max-width:760px;margin:0 auto;padding-inline:16px;padding-block:40px 64px;display:flex;flex-direction:column;gap:40px}
+.ar{direction:rtl;text-align:center}
+h1,h2{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.4}
+h1{font-size:clamp(28px,6vw,40px);color:var(--accent)}
+h2{font-size:24px}
+p{margin:0}
+.lead{color:var(--ink-2);max-width:56ch;margin-inline:auto}
+.date{font-size:14px;color:var(--ink-2);letter-spacing:.02em}
+header{display:flex;flex-direction:column;gap:12px;align-items:center}
+
+.status{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.pill{font-size:14px;padding:4px 14px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-weight:500}
+.pill.wait{background:var(--wait-soft);color:var(--wait)}
+
+section{display:flex;flex-direction:column;gap:18px}
+.item{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px 18px;display:flex;flex-direction:column;gap:14px}
+.item h3{margin:0;font-size:19px;font-weight:700;text-wrap:balance}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.side{border-radius:10px;padding:12px 14px;min-width:0;display:flex;flex-direction:column;gap:4px}
+.side b{font-size:13px;letter-spacing:.04em}
+.side.before{background:var(--before-soft)} .side.before b{color:var(--before)}
+.side.after{background:var(--accent-soft)} .side.after b{color:var(--accent)}
+.say{font-weight:700;white-space:nowrap}
+
+ul.plain{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+ul.plain li{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.nums{display:flex;flex-wrap:wrap;justify-content:center;gap:12px}
+.num{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px 18px;min-width:120px}
+.num strong{display:block;font-family:var(--f-display);font-size:26px;color:var(--accent);font-variant-numeric:tabular-nums}
+.num span{font-size:14px;color:var(--ink-2)}
+
+hr{border:0;border-top:1px solid var(--line);margin:8px 0}
+.en{direction:ltr;text-align:center;font-family:var(--f-en);font-size:15.5px;line-height:1.7;color:var(--ink)}
+.en h2{font-family:var(--f-en);font-weight:600;font-size:21px}
+.en ul{text-align:left;max-width:60ch;margin:0 auto;padding-inline-start:20px;display:flex;flex-direction:column;gap:6px}
+.en .tag{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+
+@media (max-width:520px){.pair{grid-template-columns:1fr}}
+</style>
+
+<main class="wrap">
+
+<!-- ===================== العربي ===================== -->
+<div class="ar" dir="rtl" lang="ar" style="display:flex;flex-direction:column;gap:40px">
+
+<header>
+  <span class="date">٢ أكتوبر ٢٠٢٦</span>
+  <h1>وش تغيّر في مقصد</h1>
+  <p class="lead">كل نقطة فيها: كيف كانت قبل، وكيف صارت الحين. بدون مصطلحات تقنية.</p>
+  <div class="status">
+    <span class="pill">المساعد في واتساب: منشور</span>
+    <span class="pill">تطبيق المكتب: منشور</span>
+    <span class="pill">قاعدة البيانات: منشورة</span>
+    <span class="pill wait">الموقع: جاهز وينتظر الرفع</span>
+  </div>
+</header>
+
+<section>
+  <h2>المساعد في واتساب</h2>
+
+  <div class="item"><h3>العميل يقول «أبي شقة» والعقار موجود</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>كان يقول للعميل «ما عندنا شي» مع إن عندك شقتين تناسبه. وإذا العقار مكتوب «بيع» والعميل يبي «شراء» ما يلقاه أبداً.</div>
+      <div class="side after"><b>بعد</b>يفهم إن «بيع» و«شراء» نفس الشي، ويطابق بالمدينة والحي والميزانية، ويفرّق بين الإيجار الشهري والسنوي.</div>
+    </div></div>
+
+  <div class="item"><h3>العميل يكتب رقم ناقص مثل «٤٥»</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>يحفظه ٤٥ ريال كأنه صحيح، والطلب يصير غلط.</div>
+      <div class="side after"><b>بعد</b>ما يحفظ شي ويسأل: <span class="say">«تقصد ٤٥ ألف ريال؟»</span> وبعد ما يأكد العميل يحفظه.</div>
+    </div></div>
+
+  <div class="item"><h3>المدينة</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>المساعد ما يسأل عن المدينة، والعقار ينحفظ «الرياض» تلقائياً حتى لو كان في مدينة ثانية.</div>
+      <div class="side after"><b>بعد</b>يسأل العميل عن المدينة إذا تحتاج، والمكتب لازم يختار مدينة العقار وهو يضيفه. العقارات القديمة ما غيّرنا مدينتها (ما نخمّن).</div>
+    </div></div>
+
+  <div class="item"><h3>العميل يسأل «وش الأحياء اللي عندكم؟»</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>ما يعرف وش عندك، يرد رد عام.</div>
+      <div class="side after"><b>بعد</b>يجاوب من عقاراتك المعروضة فعلاً (اللي ترخيصها ساري فقط)، ثم يسأل سؤال واحد.</div>
+    </div></div>
+
+  <div class="item"><h3>متى يتحوّل العميل لموظفك</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>بعد عدد معيّن من الرسائل يتحوّل، حتى لو العميل لسه ما وضّح وش يبي.</div>
+      <div class="side after"><b>بعد</b>يتحوّل لما يكون <b>جاهز</b>: طلبه واضح، أو يبي معاينة، أو يطلب موظف. وإذا علقت المحادثة ٦ مرات بدون أي معلومة جديدة يتحوّل بعد.</div>
+    </div></div>
+
+  <div class="item"><h3>حد الرسائل اليومي</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>١٥ رسالة، وكان هو سبب التحويل.</div>
+      <div class="side after"><b>بعد</b>٣٥ رسالة في اليوم، وصار حماية فقط عشان ما تنصرف رسائل بلا داعي.</div>
+    </div></div>
+
+  <div class="item"><h3>عميل رجع يكلّم بعد ما تحوّل</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>يرسل له نفس الرسالة الجاهزة كل مرة.</div>
+      <div class="side after"><b>بعد</b>يسأله: <span class="say">«تقصد نفس طلبك السابق؟»</span> وإذا مرّت <b>٣ أيام</b> وما أحد من المكتب كلّمه، يرجع المساعد يخدمه ويبلّغ المكتب.</div>
+    </div></div>
+
+  <div class="item"><h3>أسلوب الرد</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>أسئلة ورا بعض مثل الاستمارة.</div>
+      <div class="side after"><b>بعد</b>يتكلم مثل موظف مبيعات: يجاوب سؤال العميل أول، بعدين يسأل سؤال واحد بس.</div>
+    </div></div>
+</section>
+
+<section>
+  <h2>تطبيق المكتب</h2>
+
+  <div class="item"><h3>تصحيح بيانات العميل</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>ما تقدر تعدّل شي لو المساعد فهم غلط.</div>
+      <div class="side after"><b>بعد</b>زر «تصحيح البيانات» في بطاقة العميل، لأي موظف في المكتب.</div>
+    </div></div>
+
+  <div class="item"><h3>حذف العميل</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>ما فيه حذف.</div>
+      <div class="side after"><b>بعد</b>لصاحب المكتب فقط، ويسأل: <span class="say">«هل أنت متأكد؟»</span> حذف / إلغاء. يُحذف العميل ورسائله كلها، وما يبقى شي معلّق.</div>
+    </div></div>
+
+  <div class="item"><h3>قائمة العقارات</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>بحث بالاسم أو الحي فقط.</div>
+      <div class="side after"><b>بعد</b>فلتر بالمدينة، والبحث يشمل المدينة، وتظهر المدينة في كل عقار.</div>
+    </div></div>
+</section>
+
+<section>
+  <h2>لوحة الإدارة (لك أنت)</h2>
+
+  <div class="item"><h3>حالة المكتب «يحتاج انتباه»</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>يطلع على مكاتب شغّالة لأسباب بسيطة (مثل الشروط ما انقبلت)، وما يقول ليش.</div>
+      <div class="side after"><b>بعد</b>اسمها «يحتاج إجراء» وتطلع بس لما فيه مشكلة توقف المكتب (رخصة فال، واتساب غير مربوط)، ومكتوب السبب تحت اسم المكتب.</div>
+    </div></div>
+
+  <div class="item"><h3>خيار مزود الواتساب غير الرسمي</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>يظهر لكل مكتب جديد.</div>
+      <div class="side after"><b>بعد</b>مخفي. يظهر بس للمكتب اللي هو أصلاً عليه، عشان ما ينكسر شي.</div>
+    </div></div>
+</section>
+
+<section>
+  <h2>الموقع</h2>
+  <div class="item"><h3>الصفحة الرئيسية</h3>
+    <div class="pair">
+      <div class="side before"><b>قبل</b>كلام عام عن الذكاء الاصطناعي.</div>
+      <div class="side after"><b>بعد</b>يشرح رحلة العميل بـ ٤ خطوات: من أول رسالة واتساب لين يوصلك عميل جاهز، مع مثال «تقصد ٤٥ ألف؟». بدون أرقام أو وعود ما نقدر نثبتها.</div>
+    </div></div>
+</section>
+
+<section>
+  <h2>الفحص</h2>
+  <div class="nums">
+    <div class="num"><strong>٢٠٩</strong><span>اختبار نجح</span></div>
+    <div class="num"><strong>١٠</strong><span>محادثات تجربة حيّة</span></div>
+  </div>
+  <p class="lead">بعد النشر تأكدنا إن النسخة المنشورة مطابقة حرف بحرف، وإن تسجيل الدخول شغّال.</p>
+</section>
+
+<section>
+  <h2>باقي</h2>
+  <ul class="plain">
+    <li><b>رفع الموقع:</b> جاهز، لكن بيئة العمل هنا ممنوعة من الاتصال بـ Netlify. يحتاج إضافة <span dir="ltr">netlify-mcp.netlify.app</span> للمسموح في إعدادات البيئة، أو رفعه يدوياً.</li>
+    <li><b>مراجعة الكود ودمجه:</b> التعديلات في طلب دمج (PR #1) مفتوح.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>اقتراحاتي</h2>
+  <ul class="plain">
+    <li>قبل الإطلاق، احذف العقارات الوهمية ومكتب الواحة، وضيف عقارات حقيقية بمدنها.</li>
+    <li>جرّب بنفسك محادثة كاملة من جوال ثاني: اسأل عن حي، اكتب رقم ناقص، اطلب معاينة.</li>
+    <li>بعد أول أسبوعين مع مكاتب حقيقية، نراجع المحادثات ونشوف وين العملاء يوقفون.</li>
+  </ul>
+</section>
+
+</div>
+
+<hr>
+
+<!-- ===================== English ===================== -->
+<div class="en" dir="ltr" lang="en" style="display:flex;flex-direction:column;gap:14px">
+  <span class="tag">English summary</span>
+  <h2>What changed in Maqsad</h2>
+  <ul>
+    <li>Matching now treats "sale" and "buy" as the same and filters by city, district and budget. Customers were told "nothing available" while matching listings existed.</li>
+    <li>An unclear budget such as "45" is no longer saved. The bot asks "45 thousand?" first.</li>
+    <li>City is required for new listings and asked for when needed. Existing listings were not changed.</li>
+    <li>The bot answers district questions from the office's licensed listings only.</li>
+    <li>Handoff happens when the customer is ready, not after a message count. 35 messages/day is a safety cap only.</li>
+    <li>A returning customer is asked "same request?". After 3 days with no follow-up, the bot takes over again and notifies the office.</li>
+    <li>Office app: staff can correct customer data. The owner can delete a customer, with confirmation, removing their messages too.</li>
+    <li>Admin: "needs action" shows only real blockers, with the reason. The unofficial WhatsApp provider is hidden.</li>
+    <li>Website: rewritten around the customer journey. Built, not yet uploaded.</li>
+  </ul>
+  <p><b>Live:</b> WhatsApp bot, office app, database. <b>Pending:</b> website upload (network blocked here), PR #1 review. 209 tests pass.</p>
+</div>
+
+</main>

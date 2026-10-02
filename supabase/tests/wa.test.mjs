@@ -343,17 +343,24 @@ await test("التسليم يسجّل السبب والوقت، ويُعدّ ا�
   assert.ok(sent(f, "telegram").some((x) => x.body.text.includes("سجّل النتيجة")));
 });
 
-await test("أسباب التسليم: موظف · حد الرسائل · مالك يعرض · تعذّر الذكاء", async () => {
+await test("أسباب التسليم: موظف · حد الحماية اليومي · مالك يعرض · تعذّر الذكاء", async () => {
   let { T, client, f } = setup();
   let { handler } = await loadFunction(FN, client, f);
   await handler(ultra("966500000031", "ابي اكلم موظف"));
   assert.equal(T.customers[0].handoff_reason, "human");
 
+  // حد المكتب الصغير (1) ما يسلّم العميل: الحد حماية فقط، وأقله ٣٥ رداً آلياً خلال ٢٤ ساعة
   ({ T, client, f } = setup());
   T.offices[0].msg_quota = 1;
   ({ handler } = await loadFunction(FN, client, f));
   await handler(ultra("966500000032", "السلام عليكم"));
   await handler(ultra("966500000032", "عندكم شقق؟"));
+  assert.equal(T.customers[0].mode, "auto", "حد المكتب الصغير سلّم العميل");
+  const now = new Date().toISOString();
+  for (let i = 0; i < 32; i++) T.messages.push({ customer_id: T.customers[0].id, direction: "out", body: "x", created_at: now });
+  await handler(ultra("966500000032", "طيب"));   // الرد رقم ٣٥ ما زال آلياً
+  assert.equal(T.customers[0].mode, "auto", "سلّم قبل ٣٥ رداً");
+  await handler(ultra("966500000032", "طيب"));
   assert.equal(T.customers[0].handoff_reason, "quota");
 
   ({ T, client, f } = setup());
@@ -588,7 +595,8 @@ await test("رسالة تصل أثناء تفكير الذكاء لا تضيع: 
   assert.equal(x.aiCalls(), 2, "الذكاء لم يُسأل عن الرسالة الثانية");
   assert.ok(aiUserText(x.f, 0).includes("ابي شقة للإيجار"));
   assert.ok(aiUserText(x.f, 1).includes("بالنرجس ٣ غرف"), "الدورة الثانية لم تحمل الرسالة الجديدة");
-  assert.ok(!aiUserText(x.f, 1).includes("ابي شقة للإيجار"), "الدورة الثانية أعادت الرسالة الأولى");
+  // الرسالة الأولى تظهر في «آخر المحادثة» كسياق، لا ضمن الرسائل الجديدة
+  assert.ok(!aiUserText(x.f, 1).split("رسالة/رسائل العميل الجديدة:")[1].includes("ابي شقة للإيجار"), "الدورة الثانية أعادت الرسالة الأولى");
   assert.equal(waSent(x.f).length, 2, "المتوقع ردّان");
   const c = x.T.customers[0];
   assert.equal(c.buffer, ""); assert.equal(c.locked_until, null);

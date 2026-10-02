@@ -228,7 +228,7 @@ async function test(name, fn) { try { await fn(); results.push(['✓', name]); }
     // إضافة عقار بخطوات من داخل الترحيب
     await p.click('.wz-choice[data-v="إيجار"]'); await p.click('.wz-choice[data-v="شقة"]');
     await shot(p, 'prop-1-m');
-    await p.click('#wzNext'); await p.fill('#wzDistrict', 'النرجس'); await p.fill('#wzRooms', '3');
+    await p.click('#wzNext'); await p.fill('#wzCity', 'الرياض'); await p.fill('#wzDistrict', 'النرجس'); await p.fill('#wzRooms', '3');
     await p.click('#wzNext'); await p.fill('#wzPrice', '٤٥٠٠٠');
     assert.match(await p.textContent('#wzPriceHint'), /45,000 ريال سنوياً/);
     await p.click('#wzNext');

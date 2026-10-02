@@ -236,6 +236,17 @@ begin
   return query select v_id, v_got is not null, false;
 end $function$
 ;
+create or replace function public.annual_budget(p_deal text, p_budget numeric, p_period text default null)
+ returns numeric language sql immutable
+ set search_path to 'public', 'pg_temp'
+as $$
+  select case
+    when p_budget is null then null
+    when p_deal = 'إيجار' and (p_period = 'شهري' or (p_period is distinct from 'سنوي' and p_budget < 10000))
+      then p_budget * 12
+    else p_budget end
+$$
+;
 CREATE OR REPLACE FUNCTION public.match_properties(p_office uuid, p_deal text, p_type text, p_districts text[], p_budget numeric, p_rooms integer, p_limit integer DEFAULT 3)
  RETURNS TABLE(id uuid, title text, district text, price numeric, rooms integer, ad_license_no text, ad_license_expiry date, images text[], score integer, grade text)
  LANGUAGE sql
@@ -287,17 +298,70 @@ AS $function$
   limit greatest(p_limit, 1);
 $function$
 ;
-create or replace function public.annual_budget(p_deal text, p_budget numeric, p_period text default null)
- returns numeric language sql immutable
+create or replace function public.ar_norm(t text)
+ returns text language sql immutable
  set search_path to 'public', 'pg_temp'
 as $$
-  select case
-    when p_budget is null then null
-    when p_deal = 'إيجار' and (p_period = 'شهري' or (p_period is distinct from 'سنوي' and p_budget < 10000))
-      then p_budget * 12
-    else p_budget end
-$$
-;
+  select lower(translate(btrim(regexp_replace(coalesce(t, ''), '^\s*(حي|مدينة|مدينه)\s+', '')), 'أإآةى', 'اااهي'))
+$$;
+create or replace function public.match_properties_v2(
+  p_office uuid, p_deal text, p_type text, p_districts text[], p_budget numeric, p_rooms integer,
+  p_limit integer default 3, p_period text default null, p_city text default null)
+ returns table(id uuid, title text, city text, district text, price numeric, rooms integer,
+               ad_license_no text, ad_license_expiry date, images text[], score integer, grade text)
+ language sql stable
+ set search_path to 'public', 'pg_temp'
+as $function$
+  with b as (select public.annual_budget(p_deal, p_budget, p_period) as budget),
+  scored as (
+    select p.id, p.title, p.city, p.district, p.price, p.rooms,
+           p.ad_license_no, p.ad_license_expiry, p.images,
+           (
+             case
+               when p_districts is null or array_length(p_districts,1) is null then 20
+               when exists (select 1 from unnest(p_districts) d
+                            where public.ar_norm(d) <> ''
+                              and (public.ar_norm(p.district) like '%' || public.ar_norm(d) || '%'
+                                   or public.ar_norm(d) like '%' || public.ar_norm(p.district) || '%')) then 40
+               else 0
+             end
+           + case
+               when b.budget is null then 20
+               when p.price <= b.budget             then 30
+               when p.price <= b.budget * 1.15      then 18
+               else 0
+             end
+           + case
+               when p_rooms is null or p.rooms is null then 10
+               when p.rooms = p_rooms                  then 20
+               when abs(p.rooms - p_rooms) = 1         then 12
+               else 4
+             end
+           + case
+               when p_type is null then 5
+               when p.property_type = p_type then 10
+               else 0
+             end
+           )::int as score
+    from v_listable_properties p, b
+    where p.office_id = p_office
+      and (p_deal is null
+           or p.deal_type = p_deal
+           or (p_deal in ('شراء', 'بيع') and p.deal_type in ('شراء', 'بيع')))
+      and (p_type is null or p.property_type = p_type)
+      and (p_city is null or public.ar_norm(p_city) = ''
+           or public.ar_norm(p.city) = public.ar_norm(p_city))
+      and (b.budget is null or p.price between b.budget * 0.5 and b.budget * 1.15)
+  )
+  select id, title, city, district, price, rooms, ad_license_no, ad_license_expiry, images, score,
+         case when score >= 85 then 'تطابق تام'
+              when score >= 70 then 'تطابق قوي'
+              else 'بديل جيد' end
+  from scored
+  where score >= 50
+  order by score desc, price asc
+  limit greatest(p_limit, 1);
+$function$;
 create or replace function public.match_customers(p_office uuid, p_property uuid, p_days integer default 30, p_limit integer default 30)
  returns table(id uuid, name text, phone text, deal_type text, property_type text, location text,
                budget numeric, budget_period text, rooms integer, status text, outcome text,
@@ -313,8 +377,10 @@ as $function$
            public.annual_budget(c.deal_type, c.budget, c.budget_period) as yb
     from public.customers c, p
     where c.office_id = p.office_id
-      and c.deal_type = p.deal_type
+      and (c.deal_type = p.deal_type
+           or (c.deal_type in ('شراء', 'بيع') and p.deal_type in ('شراء', 'بيع')))
       and c.property_type = p.property_type
+      and (c.city is null or btrim(c.city) = '' or public.ar_norm(c.city) = public.ar_norm(p.city))
       and not c.opted_out
       and coalesce(c.outcome, '') not in ('deal', 'lost')
       and coalesce(c.last_message_at, c.created_at) >= now() - make_interval(days => greatest(p_days, 1))
@@ -331,12 +397,12 @@ as $function$
     and p.price between c.yb * 0.5 and c.yb * 1.15
     and exists (
       select 1 from regexp_split_to_table(coalesce(c.location, ''), '\s*[,،]\s*') d
-      where btrim(d) <> ''
-        and (p.district ilike '%' || btrim(d) || '%' or btrim(d) ilike '%' || p.district || '%'))
+      where public.ar_norm(d) <> ''
+        and (public.ar_norm(p.district) like '%' || public.ar_norm(d) || '%'
+             or public.ar_norm(d) like '%' || public.ar_norm(p.district) || '%'))
   order by 13 desc, c.seen desc
   limit greatest(p_limit, 1);
-$function$
-;
+$function$;
 CREATE OR REPLACE FUNCTION public.mint_magic(p_staff uuid)
  RETURNS text
  LANGUAGE plpgsql
@@ -517,6 +583,8 @@ grant execute on function ingest_message(uuid,text,text,text,text,text,integer) 
 grant execute on function match_properties(uuid,text,text,text[],numeric,integer,integer) to public;
 grant execute on function match_properties(uuid,text,text,text[],numeric,integer,integer) to service_role;
 grant execute on function annual_budget(text,numeric,text) to service_role;
+grant execute on function ar_norm(text) to service_role;
+grant execute on function match_properties_v2(uuid,text,text,text[],numeric,integer,integer,text,text) to service_role;
 grant execute on function match_customers(uuid,uuid,integer,integer) to service_role;
 grant execute on function mint_magic(uuid) to service_role;
 grant execute on function office_month_stats(uuid,timestamp with time zone,timestamp with time zone) to service_role;
@@ -535,6 +603,8 @@ revoke all on function call_edge(text,jsonb) from public;
 revoke all on function finish_turn(uuid,text) from public;
 revoke all on function housekeeping() from public;
 revoke all on function annual_budget(text,numeric,text) from public;
+revoke all on function ar_norm(text) from public, anon, authenticated;
+revoke all on function match_properties_v2(uuid,text,text,text[],numeric,integer,integer,text,text) from public, anon, authenticated;
 revoke all on function match_customers(uuid,uuid,integer,integer) from public;
 revoke all on function mint_magic(uuid) from public;
 revoke all on function office_month_stats(uuid,timestamp with time zone,timestamp with time zone) from public;

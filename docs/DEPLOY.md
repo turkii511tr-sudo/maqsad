@@ -90,3 +90,25 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
   صفحة الخصوصية ونقاط شاشة الموافقة في التطبيق.
 - **ميزانية الإيجار الشهرية**: `annual_budget()` تضرب الميزانية الشهرية (أو أي ميزانية إيجار أقل من ١٠ آلاف) في ١٢ قبل
   مقارنتها بأسعار المخزون السنوية، في `match_properties` و`match_customers`.
+
+## ١٠) تدقيق المنتج (٢ أكتوبر ٢٠٢٦) — api v16 وwa-webhook v5.3 وmigration 10
+
+**نُشر ٢ أكتوبر ٢٠٢٦ بموافقة صاحب المشروع:** migration 10 مطبّقة، `wa-webhook` نسخة ١٦ و`api` نسخة ١٦ (مطابقة حرفية بعد النشر)،
+`login_start` حي = 200، الواجهة md5 `5b73f9394ea8b55f8faf1c3f42446994` (مطابق لـ `app/build.py`).
+**الموقع لم يُرفع بعد:** شبكة بيئة العمل منعت الاتصال بنتليفاي؛ يُرفع `site/dist/` من لوحة نتليفاي أو من جهاز آخر.
+
+الترتيب المتّبع:
+
+1. `supabase/db/migrations/10_city_budget_matching.sql` (إضافات فقط: `customers.city`, `customers.stale_turns`, `ar_norm`,
+   `match_properties_v2`، وتحديث `match_customers`، وتوحيد «بيع» ← «شراء» في `properties`). ثم جرّب `login_start` حياً.
+2. `wa-webhook` (مع `notify.ts`) و`api` (مع `notify.ts`)، ثم `get_edge_function` ومطابقة حرفية.
+   قبل نشر `wa-webhook`: أعد اختبار الإخفاء الحي في `docs/PRIVACY_EVAL.md` (تغيّر `systemPrompt` و`aiUserPrompt`،
+   وصار آخر المحادثة ومخزون المكتب يُرسلان للذكاء بعد الإخفاء).
+3. الواجهة: `mkpatch.py` ثم `build_app()`.
+4. الموقع: بعد ما يشتغل ١–٣ (النصوص الجديدة تصف سلوكاً موجوداً في v5.2).
+
+حماية الترتيب الخاطئ: إذا نُشر `wa-webhook` قبل الـ migration يرجع للمطابقة القديمة ويحفظ العميل بدون الأعمدة الجديدة
+(ويسجل `match_v2_failed` / `customer_save_failed`). أما `api` v16 قبل الـ migration فيفشل فقط في `lead_update` للمدينة.
+
+اختبار SQL محلياً (بدون لمس الإنتاج): Postgres 16 محلي، الجداول `customers` و`properties` و`v_listable_properties`
+و`annual_budget` و`match_properties` من الملفين، ثم الـ migration.
