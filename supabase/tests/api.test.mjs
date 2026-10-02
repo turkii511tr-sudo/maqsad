@@ -798,6 +798,62 @@ await test("v16 قائمة المكاتب: «واتساب مربوط» يحتا�
   assert.ok(!JSON.stringify(r.body).includes("EAA"), "رمز الوصول طلع للواجهة");
 });
 
+await test("v17 الوسيط المسؤول: صاحب المكتب يختاره، والوسيط يشوف «عملائي»، وموظف مكتب ثاني مرفوض", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "bootstrap" }, "s2");
+  assert.deepEqual(r.body.team.map((t) => t.name), ["صاحب", "وسيط"], "الفريق فيه المشغّل أو ناقص");
+  assert.ok(!JSON.stringify(r.body.team).includes("9665000"), "جوالات الموظفين طلعت");
+  assert.equal(r.body.staff.id, "s2", "التطبيق ما يعرف معرّف الموظف نفسه (فلتر «عملائي» يطلع فاضي)");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s2" }, "s2");
+  assert.equal(r.status, 403, "الوسيط اختار بنفسه");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s3" }, "s1");
+  assert.equal(r.status, 400, "موظف مكتب ثاني انقبل");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "sa" }, "s1");
+  assert.equal(r.status, 400, "المشغّل انقبل كوسيط");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s2" }, "s1");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.assigned_name, "وسيط");
+  const c = T.customers.find((x) => x.id === "c1");
+  assert.equal(c.assigned_to, "s2"); assert.ok(c.assigned_at);
+  assert.equal(T.events.at(-1).kind, "lead_assigned");
+  r = await call(h, { action: "leads", filter: "mine" }, "s2");
+  assert.deepEqual(r.body.leads.map((l) => l.id), ["c1"]);
+  r = await call(h, { action: "lead", id: "c1" }, "s2");
+  assert.equal(r.body.lead.assigned_name, "وسيط");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: null }, "s1");
+  assert.equal(r.status, 200);
+  assert.equal(c.assigned_to, null); assert.equal(c.assigned_at, null);
+});
+
+await test("v17 حذف موظف ما دخل أبد: عملاؤه يرجعون بلا وسيط", async () => {
+  const { T, h } = await boot((d) => {
+    d.staff.push({ id: "s4", office_id: "o1", name: "جديد", phone: "966500000004", role: "agent", active: true });
+    d.customers[5].assigned_to = "s4";
+  });
+  const r = await call(h, { action: "staff_delete", id: "s4" }, "sa");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(T.customers[5].assigned_to, null);
+});
+
+await test("v17 البحث يلقى أي عميل في المكتب (مو بس آخر ١٠٠)، والرموز الخطرة تنشال", async () => {
+  const { h } = await boot((d) => { d.customers[2400].location = "حي النخيل"; d.customers[7].summary = "يبي فيلا في النخيل"; });
+  let r = await call(h, { action: "leads", q: "النخيل" }, "s2");
+  assert.deepEqual(r.body.leads.map((l) => l.id).sort(), ["c2400", "c7"]);
+  r = await call(h, { action: "leads", q: "٠٠٠٠٠٠١٢" }, "s2");
+  assert.ok(r.body.leads.some((l) => l.id === "c12"), "البحث بالجوال بالأرقام العربية ما اشتغل");
+  r = await call(h, { action: "leads", q: "x),phone.neq.(" }, "s2");
+  assert.equal(r.status, 200);
+});
+
+await test("v17 الفرص الضائعة: الجديدة إذا منشورة، وإلا ترجع للقديمة", async () => {
+  let b = await boot((d) => { d.__gap2 = [{ district: "النرجس", deal_type: "إيجار", property_type: "شقة", demand: 3, budget: 45000, supply: 1, supply_fit: 0 }]; });
+  let r = await call(b.h, { action: "analytics" }, "s2");
+  assert.equal(r.body.gap[0].supply_fit, 0); assert.deepEqual(b.T.__gapCalls, ["v2"]);
+  b = await boot((d) => { d.__noGap2 = true; d.__gap = [{ district: "النرجس", demand: 3, supply: 1 }]; });
+  r = await call(b.h, { action: "analytics" }, "s2");
+  assert.equal(r.body.gap[0].district, "النرجس"); assert.deepEqual(b.T.__gapCalls, ["v2", "v1"]);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

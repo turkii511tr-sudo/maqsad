@@ -12,7 +12,7 @@ var TOKEN_KEY = "maqsad_token";
 var S = {
   token: "", me: null, isSuper: false,
   offices: [], curOffice: null, editOffice: null,
-  leads: [], props: [], status: null,
+  leads: [], props: [], status: null, team: [],
   leadFilter: "all", leadQuery: "",
   stockFilter: "all", stockQuery: "", stockCity: "",
   signups: [], signupFilter: "new", signupsNew: 0,
@@ -503,6 +503,7 @@ function load() {
     S.me = r; S.isSuper = !!r.is_super;
     S.offices = r.offices || [];
     S.leads = r.leads || [];
+    S.team = r.team || [];
     S.props = r.properties || [];
     S.status = r.status || null;
     S.signupsNew = r.signups_new || 0;
@@ -1076,18 +1077,23 @@ function stat(v, k, tone) {
 
 function loadGap() {
   call({ action: "analytics" }).then(function (r) {
-    // demand_gap يعيد لكل حي: كم طلب عليه (demand) وكم عقار متاح فيه (supply)
+    // لكل حي (ونوع الطلب والعقار في النسخة الجديدة): كم طلب (demand)، وكم عقار متاح (supply)،
+    // وكم منها في حدود ميزانية الطالبين (supply_fit). النسخة القديمة ما فيها supply_fit
     var gap = (r.gap || []).filter(function (g) {
-      return (g.demand || 0) > (g.supply || 0);
+      var have = g.supply_fit != null ? g.supply_fit : g.supply;
+      return (g.demand || 0) > (have || 0);
     });
     if (!gap.length) { $("#gapBlock").hidden = true; return; }
     $("#gapBlock").hidden = false;
     $("#gapList").innerHTML = gap.slice(0, 5).map(function (g) {
-      var sub = g.supply
-        ? "عندك " + g.supply + " عقار فقط في هذا الحي"
-        : "لا يوجد عقار متاح في مخزونك هنا";
+      var what = [g.property_type, g.deal_type].filter(Boolean).join(" ");
+      var sub = !g.supply ? "لا يوجد عقار متاح في مخزونك هنا"
+        : g.supply_fit == null ? "عندك " + g.supply + " عقار فقط في هذا الحي"
+        : g.supply_fit === 0 ? "عندك " + g.supply + " عقار هنا، لكن فوق ميزانيتهم"
+        : "عندك " + g.supply_fit + " فقط في حدود ميزانيتهم";
+      if (g.budget) sub = "ميزانيتهم حوالي " + money(g.budget) + " ريال" + (g.deal_type === "إيجار" ? " سنوي" : "") + " · " + sub;
       return '<div class="row static"><div class="main">' +
-        '<span class="t">' + esc(g.district || "حي غير محدد") + "</span>" +
+        '<span class="t">' + esc((g.district || "حي غير محدد") + (what ? " · " + what : "")) + "</span>" +
         '<span class="s">' + esc(sub) + "</span></div>" +
         '<div class="end"><span class="tag warn num">' + g.demand + " طلب</span></div></div>";
     }).join("");
@@ -1097,20 +1103,62 @@ function loadGap() {
 /* ==========================================================================
    العملاء
    ========================================================================== */
+// الوسيط المسؤول عن العميل (يختاره صاحب المكتب)
+function myId() { return (S.me && S.me.staff && S.me.staff.id) || ""; }
+function teamName(id) {
+  var t = S.team.filter(function (x) { return x.id === id; })[0];
+  return t ? t.name : "";
+}
+function firstName(n) {
+  var w = String(n || "").trim().split(/\s+/);
+  return /^(أبو|ابو|أم|ام)$/.test(w[0]) && w[1] ? w[0] + " " + w[1] : w[0] || "";
+}
+function assignTag(l) {
+  if (!l.assigned_to) return "";
+  if (l.assigned_to === myId()) return '<span class="tag brand">لك</span>';
+  var n = firstName(teamName(l.assigned_to));
+  return n ? '<span class="tag mute">' + esc(n) + "</span>" : "";
+}
+
 function leadMatches(l) {
+  if (S.leadFilter === "mine" && l.assigned_to !== myId()) return false;
   if (S.leadFilter === "waiting" && !needsCall(l)) return false;
   if (S.leadFilter === "qualified" && l.status !== "qualified") return false;
   if (S.leadFilter === "manual" && l.mode !== "manual") return false;
   if (S.leadFilter === "auto" && l.mode !== "auto") return false;
   var q = S.leadQuery.trim();
   if (!q) return true;
-  var hay = [l.name, l.phone, l.location, l.property_type, l.deal_type].join(" ").toLowerCase();
+  var hay = [l.name, l.phone, l.location, l.property_type, l.deal_type, l.summary].join(" ").toLowerCase();
   return hay.indexOf(q.toLowerCase()) !== -1;
 }
 
+// الجهاز فيه آخر ١٠٠ عميل فقط؛ البحث يسأل الخادم عن الأقدم ويضيفهم للنتيجة
+var LEADS_PAGE = 100;
+function leadPool() {
+  if (!S.leadHits || !S.leadQuery.trim()) return S.leads;
+  var seen = {};
+  S.leads.forEach(function (l) { seen[l.id] = 1; });
+  return S.leads.concat(S.leadHits.filter(function (l) { return !seen[l.id]; }));
+}
+function searchOlderLeads() {
+  clearTimeout(S.leadSearchT);
+  var q = S.leadQuery.trim();
+  S.leadHits = null;
+  if (q.length < 2 || S.leads.length < LEADS_PAGE) return;
+  S.leadSearchT = setTimeout(function () {
+    call({ action: "leads", q: q }).then(function (r) {
+      if (S.leadQuery.trim() !== q) return;
+      S.leadHits = r.leads || [];
+      renderLeads();
+    }).catch(function () {});
+  }, 350);
+}
+
 function renderLeads() {
-  var list = S.leads.filter(leadMatches);
-  $("#leadsCount").textContent = list.length + " من " + S.leads.length;
+  var list = leadPool().filter(leadMatches);
+  $("#leadsCount").textContent = S.leadQuery.trim() && S.leadHits
+    ? list.length + " نتيجة"
+    : list.length + " من " + S.leads.length;
 
   if (!S.leads.length) {
     $("#leadsWrap").innerHTML = state(ICON.chat, "ما وصل عميل بعد",
@@ -1136,7 +1184,7 @@ function renderLeads() {
     var row = el("button", "row",
       '<div class="main"><span class="t">' + esc(l.name || l.phone) + "</span>" +
       '<span class="s">' + esc(want) + (money_ ? " · " + money_ : "") + "</span></div>" +
-      '<div class="end">' + outcomeTag(l) + mode + tag +
+      '<div class="end">' + assignTag(l) + outcomeTag(l) + mode + tag +
       svg(ICON.chev, 'class="chev"') + "</div>");
     row.onclick = function () { openLead(l.id); };
     wrap.appendChild(row);
@@ -1171,6 +1219,24 @@ function outcomeNote(l) {
   if (!l.outcome) return "بعد ما تتصل بالعميل اختر النتيجة — تظهر في «أداء المكتب» وملخص الشهر.";
   return "سجّلها " + (l.outcome_by_name || "النظام تلقائياً لما رد الموظف من جوال المكتب") + " " + ago(l.outcome_at) +
     ". اضغطها مرة ثانية لإلغائها.";
+}
+
+function assignNote(l) {
+  if (!l.assigned_to) return "ما فيه وسيط مسؤول — التنبيه يوصل للمكتب كله.";
+  if (l.assigned_to === myId()) return "هذا العميل مسؤوليتك.";
+  return "المسؤول: " + (l.assigned_name || teamName(l.assigned_to) || "موظف");
+}
+// صاحب المكتب يختار الوسيط، والباقين يشوفون الاسم فقط. مكتب بموظف واحد: ما تظهر
+function assignCard(l) {
+  if (S.team.length < 2 && !l.assigned_to) return "";
+  var pick = canDeleteLead()
+    ? '<select id="leadAssign" class="input" aria-label="الوسيط المسؤول"><option value="">بدون</option>' +
+      S.team.map(function (t) {
+        return '<option value="' + esc(t.id) + '"' + (t.id === l.assigned_to ? " selected" : "") + ">" + esc(t.name) + "</option>";
+      }).join("") + "</select>"
+    : "";
+  return '<div class="card" style="margin:14px 0"><h3>الوسيط المسؤول</h3>' + pick +
+    '<p class="hint" id="assignNote">' + esc(assignNote(l)) + "</p></div>";
 }
 
 function openLead(id) {
@@ -1208,6 +1274,7 @@ function openLead(id) {
         }).join("") + "</div>" +
         '<p class="hint" id="outcomeNote">' + esc(outcomeNote(l)) + "</p>" +
       "</div>" +
+      assignCard(l) +
       (l.summary ? '<div class="card" style="margin:14px 0"><h3>ملخص الذكاء الاصطناعي</h3><p style="font-size:14px;line-height:1.8;color:var(--ink-2)">' + esc(l.summary) + "</p></div>" : "") +
       '<div class="card" style="margin-bottom:14px" id="leadReq"><div class="card-hd"><h3>طلب العميل</h3>' +
         '<button type="button" class="linkbtn" id="leadEdit">تصحيح البيانات</button></div><dl class="dl">' +
@@ -1254,6 +1321,19 @@ function openLead(id) {
         };
       })(chips[ci]);
     }
+
+    if ($("#leadAssign")) $("#leadAssign").onchange = function () {
+      var sel = this, prev = l.assigned_to || "";
+      sel.disabled = true;
+      call({ action: "lead_assign", id: l.id, staff_id: sel.value || null }).then(function (r) {
+        l.assigned_to = sel.value || null; l.assigned_name = r.assigned_name || null;
+        var i = S.leads.findIndex(function (x) { return x.id === l.id; });
+        if (i > -1) S.leads[i].assigned_to = l.assigned_to;
+        $("#assignNote").textContent = assignNote(l);
+        renderLeads(); renderToday();
+      }).catch(function (e) { sel.value = prev; note("#leadMsg", e.message, "err"); })
+        .then(function () { sel.disabled = false; });
+    };
 
     $("#leadEdit").onclick = function () { openLeadEdit(l); };
     if ($("#leadDel")) $("#leadDel").onclick = function () { askLeadDelete(l); };
@@ -1587,7 +1667,7 @@ function setMode(m) {
 
 function exitOffice() {
   S.curOffice = null; S.pre = null; S.month = {};
-  S.me.office = S.own; S.leads = []; S.props = []; S.status = S.pstatus;
+  S.me.office = S.own; S.leads = []; S.team = []; S.props = []; S.status = S.pstatus;
   closeSheet();
   setMode("platform");
   renderHome(); renderOffices();
@@ -1804,6 +1884,7 @@ function switchOffice(o, btn) {
     call({ action: "settings_status" }),
   ]).then(function (res) {
     S.leads = res[0].leads || [];
+    S.team = res[0].team || [];
     S.props = res[1].properties || [];
     S.status = res[2];
     S.me.office = { id: o.id, name: o.name, code: o.code, license_no: o.license_no,
@@ -2711,7 +2792,7 @@ function bind() {
     Promise.all([
       call({ action: "leads" }), call({ action: "properties" }), call({ action: "settings_status" }),
     ]).then(function (r) {
-      S.leads = r[0].leads || []; S.props = r[1].properties || []; S.status = r[2];
+      S.leads = r[0].leads || []; S.team = r[0].team || S.team; S.props = r[1].properties || []; S.status = r[2];
       renderToday(); renderLeads(); renderStock(); renderSettings();
     }).catch(function () {}).then(function () { b.disabled = false; });
   };
@@ -2739,7 +2820,7 @@ function bind() {
     })(uc[ui]);
   }
 
-  $("#leadSearch").oninput = function () { S.leadQuery = this.value; renderLeads(); };
+  $("#leadSearch").oninput = function () { S.leadQuery = this.value; searchOlderLeads(); renderLeads(); };
   $("#stockSearch").oninput = function () { S.stockQuery = this.value; renderStock(); };
   $("#stockCity").onchange = function () { S.stockCity = this.value; renderStock(); };
 

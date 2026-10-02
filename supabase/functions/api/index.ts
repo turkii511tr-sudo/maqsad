@@ -447,7 +447,13 @@ async function bump(officeId: string | null | undefined, f: Record<string, numbe
 const OUTCOMES = ["no_answer", "contacted", "viewing", "deal", "lost"];
 const PROP_STATES = ["available", "reserved", "rented", "sold", "closed"];
 const LEAD_COLS = "id,name,phone,deal_type,property_type,city,budget,budget_period,location,rooms,status,mode," +
-  "summary,msg_count,last_message_at,opted_out,handoff_reason,handed_at,outcome,outcome_at";
+  "summary,msg_count,last_message_at,opted_out,handoff_reason,handed_at,outcome,outcome_at,assigned_to";
+
+// أسماء موظفي المكتب النشطين فقط (لاختيار الوسيط المسؤول عن العميل) — بلا جوالات ولا أدوار
+async function teamOf(oid: string) {
+  const { data } = await db.from("staff").select("id,name,role").eq("office_id", oid).eq("active", true).order("created_at");
+  return (data ?? []).filter((t: any) => t.role !== "super_admin").map((t: any) => ({ id: t.id, name: t.name }));
+}
 
 // الشهر بتوقيت الرياض (UTC+3 ثابت، بلا توقيت صيفي): «YYYY-MM» ← بدايته وبداية الشهر اللي بعده
 function monthRange(m?: string) {
@@ -744,7 +750,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
   }
 
   const meBlock = () => ({
-    staff: { name: ctx.staff.name, role: ctx.staff.role, phone: ctx.staff.phone },
+    staff: { id: ctx.staff.id, name: ctx.staff.name, role: ctx.staff.role, phone: ctx.staff.phone },
     is_super: isSuper,
     office: {
       id: office.id, name: office.name, code: office.code, license_no: office.license_no,
@@ -762,7 +768,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
   const act = async (): Promise<Response> => {
   switch (action) {
     case "bootstrap": {
-      const [leads, props, status, offices, signups] = await Promise.all([
+      const [leads, props, status, offices, signups, team] = await Promise.all([
         db.from("customers")
           .select(LEAD_COLS)
           .eq("office_id", oid)
@@ -774,10 +780,12 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
         isSuper
           ? db.from("signup_requests").select("id", { count: "exact", head: true }).eq("status", "new")
           : Promise.resolve({ count: null }),
+        teamOf(oid),
       ]);
       return json({
         ...meBlock(),
         leads: leads.data ?? [],
+        team,
         properties: decorate(props.data ?? [], office),
         status, offices,
         signups_new: (signups as any).count ?? null,
@@ -935,6 +943,8 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (s.last_login_at || (outs ?? 0) > 0 || (reqs ?? 0) > 0 || (logins ?? 0) > 0) {
         return json({ error: "هذا الموظف دخل التطبيق من قبل — أوقفه بدل الحذف عشان تبقى سجلاته" }, 409);
       }
+      // عملاؤه يرجعون بلا وسيط مسؤول (ما فيه مفتاح أجنبي يفرّغها تلقائياً)
+      await db.from("customers").update({ assigned_to: null, assigned_at: null }).eq("assigned_to", s.id);
       const { error } = await db.from("staff").delete().eq("id", s.id);
       if (error) return json({ error: "تعذّر الحذف" }, 400);
       await db.from("events").insert({ office_id: s.office_id, kind: "staff_deleted",
@@ -1228,8 +1238,16 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (b.filter === "qualified") q = q.eq("status", "qualified");
       if (b.filter === "manual") q = q.eq("mode", "manual");
       if (b.filter === "auto") q = q.eq("mode", "auto");
-      const { data } = await q;
-      return json({ leads: data ?? [] });
+      if (b.filter === "mine") q = q.eq("assigned_to", ctx.staff.id);
+      // البحث في كل عملاء المكتب، مو بس آخر ١٠٠ اللي في الجهاز (الاسم، الحي، الملخص، أو جزء من الجوال)
+      const term = String(b.q ?? "").replace(/[%,()*\\:."']/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+      if (term) {
+        const d = term.replace(/[٠-٩]/g, (x) => String("٠١٢٣٤٥٦٧٨٩".indexOf(x))).replace(/\D/g, "");
+        q = q.or([`name.ilike.%${term}%`, `location.ilike.%${term}%`, `summary.ilike.%${term}%`,
+          ...(d.length >= 3 ? [`phone.ilike.%${d}%`] : [])].join(","));
+      }
+      const [{ data }, team] = await Promise.all([q, teamOf(oid)]);
+      return json({ leads: data ?? [], team });
     }
 
     case "lead": {
@@ -1239,12 +1257,13 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       const { data: msgs } = await db.from("messages")
         .select("direction,body,created_at").eq("customer_id", c.id)
         .order("created_at", { ascending: false }).limit(20);
-      let outcome_by_name: string | null = null;
-      if (c.outcome_by) {
-        const { data: who } = await db.from("staff").select("name").eq("id", c.outcome_by).maybeSingle();
-        outcome_by_name = who?.name ?? null;
-      }
-      return json({ lead: { ...c, outcome_by_name }, messages: (msgs ?? []).reverse() });
+      const nameOf = async (id: string | null) => {
+        if (!id) return null;
+        const { data: who } = await db.from("staff").select("name").eq("id", id).maybeSingle();
+        return who?.name ?? null;
+      };
+      const [outcome_by_name, assigned_name] = await Promise.all([nameOf(c.outcome_by), nameOf(c.assigned_to)]);
+      return json({ lead: { ...c, outcome_by_name, assigned_name }, messages: (msgs ?? []).reverse() });
     }
 
     case "set_mode": {
@@ -1327,6 +1346,40 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       await db.from("events").insert({ office_id: oid, kind: "lead_deleted",
         detail: { by: ctx.staff.name, last4 } });
       return json({ ok: true });
+    }
+
+    // ===== الوسيط المسؤول عن العميل: يختاره صاحب المكتب (أو يفرّغه) =====
+    // ما يغيّر وضع المحادثة ولا يرسل للعميل شيئاً؛ الوسيط المختار يوصله إشعار على جواله إذا مفعّل
+    case "lead_assign": {
+      if (!isOwner) return json({ error: "اختيار الوسيط لصاحب المكتب" }, 403);
+      const { data: cur } = await db.from("customers").select("id,name,phone,deal_type,property_type,location,assigned_to")
+        .eq("office_id", oid).eq("id", b.id).maybeSingle();
+      if (!cur) return json({ error: "not_found" }, 404);
+      const to = b.staff_id ? String(b.staff_id) : null;
+      let who: any = null;
+      if (to) {
+        const { data } = await db.from("staff").select("id,name,role,active")
+          .eq("office_id", oid).eq("id", to).maybeSingle();
+        if (!data || !data.active || data.role === "super_admin") return json({ error: "الموظف غير موجود في المكتب" }, 400);
+        who = data;
+      }
+      if ((cur.assigned_to ?? null) === to) return json({ ok: true, lead: { id: cur.id, assigned_to: to }, assigned_name: who?.name ?? null });
+      const { data, error } = await db.from("customers")
+        .update({ assigned_to: to, assigned_at: to ? new Date().toISOString() : null })
+        .eq("office_id", oid).eq("id", b.id).select(LEAD_COLS).maybeSingle();
+      if (error || !data) return json({ error: "تعذّر الحفظ" }, 400);
+      await db.from("events").insert({ office_id: oid, kind: "lead_assigned",
+        detail: { by: ctx.staff.name, customer: b.id, from: cur.assigned_to ?? null, to } });
+      if (who && who.id !== ctx.staff.id) {
+        const want = [cur.deal_type, cur.property_type, cur.location].filter(Boolean).join(" · ");
+        try {
+          await pushOffice(db, await secrets(), oid, {
+            title: "👤 عميل صار مسؤوليتك", body: `${cur.name || cur.phone}${want ? "\n" + want : ""}`,
+            url: "/", tag: "assign-" + cur.id,
+          }, { staff_id: who.id });
+        } catch { /* الإشعار ليس شرطاً */ }
+      }
+      return json({ ok: true, lead: data, assigned_name: who?.name ?? null });
     }
 
     case "properties": {
@@ -1440,8 +1493,10 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
 
     case "analytics": {
       const { data: sum } = await db.rpc("office_summary", { p_office: oid, p_days: 30 });
-      const { data: gap } = await db.rpc("demand_gap", { p_office: oid, p_days: 30 });
-      return json({ summary: sum, gap: gap ?? [] });
+      // الفرص الضائعة بالحي ونوع العقار والميزانية (migration 12)؛ إذا ما انشرت نرجع للقديمة (بالحي فقط)
+      let gap = await db.rpc("demand_gap_v2", { p_office: oid, p_days: 30 });
+      if (gap.error) gap = await db.rpc("demand_gap", { p_office: oid, p_days: 30 });
+      return json({ summary: sum, gap: gap.data ?? [] });
     }
 
     case "settings_status":
