@@ -119,3 +119,12 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
 لا تغيير في القاعدة ولا في `systemPrompt` و`aiUserPrompt` (فما يحتاج إعادة اختبار الإخفاء الحي).
 **الموقع لم يُرفع بعد:** شبكة بيئة العمل منعت نتليفاي مرة ثانية (403). نسخة جاهزة للرفع اليدوي:
 `/mnt/project-files/deploy/maqsad-site-2026-10-02.zip` (محتوى `site/dist/`) — تُسحب إلى صفحة Deploys في maqsad-site.
+
+## ١٢) المزوّد الافتراضي والوسيط المسؤول والفرص الضائعة (٢ أكتوبر ٢٠٢٦)
+
+- **migration 11 (`11_wa_provider_default.sql`) مطبّقة على الإنتاج** بموافقة صاحب المشروع: المكتب الجديد بلا مزوّد يبدأ على `cloud`. بعدها `login_start` حي = 200.
+- **لم يُنشر بعد (ينتظر موافقة):** ترتيب النشر:
+  1. `12_lead_owner.sql` (إضافات فقط: `customers.assigned_to`, `assigned_at`، فهرس، ودالة `demand_gap_v2`). ثم `login_start` حياً.
+  2. `api` مع `notify.ts` (`lead_assign`، `team`، بحث `leads` بـ `q`، `analytics` على `demand_gap_v2`). ثم `get_edge_function` ومطابقة حرفية.
+     `api` قبل الـ migration يكسر `bootstrap` (عمود `assigned_to` في `LEAD_COLS`)، فلا تعكس الترتيب.
+  3. الواجهة: `mkpatch.py` ثم `build_app()`.

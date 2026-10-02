@@ -30,6 +30,13 @@ export function makeDb(seed) {
     is(c, v) { this.f.push((r) => (r[c] ?? null) === v); return this; }
     gte(c, v) { this.f.push((r) => String(r[c]) >= String(v)); return this; }
     in(c, vs) { this.f.push((r) => vs.includes(r[c])); return this; }
+    // or("a.ilike.%x%,b.ilike.%y%") كما في PostgREST (ilike فقط)
+    or(expr) {
+      const parts = expr.split(",").map((p) => { const [c, op, ...v] = p.split("."); return { c, op, v: v.join(".") }; });
+      this.f.push((r) => parts.some(({ c, op, v }) => op === "ilike" &&
+        String(r[c] ?? "").toLowerCase().includes(v.replace(/^%|%$/g, "").toLowerCase())));
+      return this;
+    }
     contains(c, obj) {
       // مصفوفة: العمود يحتوي كل العناصر (مثل recent_ids @> '{id}') · كائن: مفاتيح JSON متطابقة
       this.f.push((r) => Array.isArray(obj)
@@ -115,6 +122,13 @@ export function makeDb(seed) {
     c.locked_until = left ? Date.now() + 90_000 : null;
     (T.__finishTurn ??= []).push({ consumed: k, left });
     return left;
+  };
+  rpcs.office_summary = () => ({});
+  rpcs.demand_gap = () => (T.__gapCalls ??= []).push("v1") && (T.__gap ?? []);
+  rpcs.demand_gap_v2 = () => {
+    (T.__gapCalls ??= []).push("v2");
+    if (T.__noGap2) throw Object.assign(new Error("function demand_gap_v2 does not exist"), { v2: true });
+    return T.__gap2 ?? [];
   };
   rpcs.match_properties = (a) => { (T.__matchCalls ??= []).push({ fn: "v1", ...a }); return T.__matches ?? []; };
   rpcs.match_properties_v2 = (a) => {

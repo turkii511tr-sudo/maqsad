@@ -1239,6 +1239,13 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (b.filter === "manual") q = q.eq("mode", "manual");
       if (b.filter === "auto") q = q.eq("mode", "auto");
       if (b.filter === "mine") q = q.eq("assigned_to", ctx.staff.id);
+      // البحث في كل عملاء المكتب، مو بس آخر ١٠٠ اللي في الجهاز (الاسم، الحي، الملخص، أو جزء من الجوال)
+      const term = String(b.q ?? "").replace(/[%,()*\\:."']/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+      if (term) {
+        const d = term.replace(/[٠-٩]/g, (x) => String("٠١٢٣٤٥٦٧٨٩".indexOf(x))).replace(/\D/g, "");
+        q = q.or([`name.ilike.%${term}%`, `location.ilike.%${term}%`, `summary.ilike.%${term}%`,
+          ...(d.length >= 3 ? [`phone.ilike.%${d}%`] : [])].join(","));
+      }
       const [{ data }, team] = await Promise.all([q, teamOf(oid)]);
       return json({ leads: data ?? [], team });
     }
@@ -1486,8 +1493,10 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
 
     case "analytics": {
       const { data: sum } = await db.rpc("office_summary", { p_office: oid, p_days: 30 });
-      const { data: gap } = await db.rpc("demand_gap", { p_office: oid, p_days: 30 });
-      return json({ summary: sum, gap: gap ?? [] });
+      // الفرص الضائعة بالحي ونوع العقار والميزانية (migration 12)؛ إذا ما انشرت نرجع للقديمة (بالحي فقط)
+      let gap = await db.rpc("demand_gap_v2", { p_office: oid, p_days: 30 });
+      if (gap.error) gap = await db.rpc("demand_gap", { p_office: oid, p_days: 30 });
+      return json({ summary: sum, gap: gap.data ?? [] });
     }
 
     case "settings_status":

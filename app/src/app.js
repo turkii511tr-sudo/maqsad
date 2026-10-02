@@ -1077,18 +1077,23 @@ function stat(v, k, tone) {
 
 function loadGap() {
   call({ action: "analytics" }).then(function (r) {
-    // demand_gap يعيد لكل حي: كم طلب عليه (demand) وكم عقار متاح فيه (supply)
+    // لكل حي (ونوع الطلب والعقار في النسخة الجديدة): كم طلب (demand)، وكم عقار متاح (supply)،
+    // وكم منها في حدود ميزانية الطالبين (supply_fit). النسخة القديمة ما فيها supply_fit
     var gap = (r.gap || []).filter(function (g) {
-      return (g.demand || 0) > (g.supply || 0);
+      var have = g.supply_fit != null ? g.supply_fit : g.supply;
+      return (g.demand || 0) > (have || 0);
     });
     if (!gap.length) { $("#gapBlock").hidden = true; return; }
     $("#gapBlock").hidden = false;
     $("#gapList").innerHTML = gap.slice(0, 5).map(function (g) {
-      var sub = g.supply
-        ? "عندك " + g.supply + " عقار فقط في هذا الحي"
-        : "لا يوجد عقار متاح في مخزونك هنا";
+      var what = [g.property_type, g.deal_type].filter(Boolean).join(" ");
+      var sub = !g.supply ? "لا يوجد عقار متاح في مخزونك هنا"
+        : g.supply_fit == null ? "عندك " + g.supply + " عقار فقط في هذا الحي"
+        : g.supply_fit === 0 ? "عندك " + g.supply + " عقار هنا، لكن فوق ميزانيتهم"
+        : "عندك " + g.supply_fit + " فقط في حدود ميزانيتهم";
+      if (g.budget) sub = "ميزانيتهم حوالي " + money(g.budget) + " ريال" + (g.deal_type === "إيجار" ? " سنوي" : "") + " · " + sub;
       return '<div class="row static"><div class="main">' +
-        '<span class="t">' + esc(g.district || "حي غير محدد") + "</span>" +
+        '<span class="t">' + esc((g.district || "حي غير محدد") + (what ? " · " + what : "")) + "</span>" +
         '<span class="s">' + esc(sub) + "</span></div>" +
         '<div class="end"><span class="tag warn num">' + g.demand + " طلب</span></div></div>";
     }).join("");
@@ -1123,13 +1128,37 @@ function leadMatches(l) {
   if (S.leadFilter === "auto" && l.mode !== "auto") return false;
   var q = S.leadQuery.trim();
   if (!q) return true;
-  var hay = [l.name, l.phone, l.location, l.property_type, l.deal_type].join(" ").toLowerCase();
+  var hay = [l.name, l.phone, l.location, l.property_type, l.deal_type, l.summary].join(" ").toLowerCase();
   return hay.indexOf(q.toLowerCase()) !== -1;
 }
 
+// الجهاز فيه آخر ١٠٠ عميل فقط؛ البحث يسأل الخادم عن الأقدم ويضيفهم للنتيجة
+var LEADS_PAGE = 100;
+function leadPool() {
+  if (!S.leadHits || !S.leadQuery.trim()) return S.leads;
+  var seen = {};
+  S.leads.forEach(function (l) { seen[l.id] = 1; });
+  return S.leads.concat(S.leadHits.filter(function (l) { return !seen[l.id]; }));
+}
+function searchOlderLeads() {
+  clearTimeout(S.leadSearchT);
+  var q = S.leadQuery.trim();
+  S.leadHits = null;
+  if (q.length < 2 || S.leads.length < LEADS_PAGE) return;
+  S.leadSearchT = setTimeout(function () {
+    call({ action: "leads", q: q }).then(function (r) {
+      if (S.leadQuery.trim() !== q) return;
+      S.leadHits = r.leads || [];
+      renderLeads();
+    }).catch(function () {});
+  }, 350);
+}
+
 function renderLeads() {
-  var list = S.leads.filter(leadMatches);
-  $("#leadsCount").textContent = list.length + " من " + S.leads.length;
+  var list = leadPool().filter(leadMatches);
+  $("#leadsCount").textContent = S.leadQuery.trim() && S.leadHits
+    ? list.length + " نتيجة"
+    : list.length + " من " + S.leads.length;
 
   if (!S.leads.length) {
     $("#leadsWrap").innerHTML = state(ICON.chat, "ما وصل عميل بعد",
@@ -2791,7 +2820,7 @@ function bind() {
     })(uc[ui]);
   }
 
-  $("#leadSearch").oninput = function () { S.leadQuery = this.value; renderLeads(); };
+  $("#leadSearch").oninput = function () { S.leadQuery = this.value; searchOlderLeads(); renderLeads(); };
   $("#stockSearch").oninput = function () { S.stockQuery = this.value; renderStock(); };
   $("#stockCity").onchange = function () { S.stockCity = this.value; renderStock(); };
 

@@ -834,6 +834,25 @@ await test("v17 حذف موظف ما دخل أبد: عملاؤه يرجعون ب
   assert.equal(T.customers[5].assigned_to, null);
 });
 
+await test("v17 البحث يلقى أي عميل في المكتب (مو بس آخر ١٠٠)، والرموز الخطرة تنشال", async () => {
+  const { h } = await boot((d) => { d.customers[2400].location = "حي النخيل"; d.customers[7].summary = "يبي فيلا في النخيل"; });
+  let r = await call(h, { action: "leads", q: "النخيل" }, "s2");
+  assert.deepEqual(r.body.leads.map((l) => l.id).sort(), ["c2400", "c7"]);
+  r = await call(h, { action: "leads", q: "٠٠٠٠٠٠١٢" }, "s2");
+  assert.ok(r.body.leads.some((l) => l.id === "c12"), "البحث بالجوال بالأرقام العربية ما اشتغل");
+  r = await call(h, { action: "leads", q: "x),phone.neq.(" }, "s2");
+  assert.equal(r.status, 200);
+});
+
+await test("v17 الفرص الضائعة: الجديدة إذا منشورة، وإلا ترجع للقديمة", async () => {
+  let b = await boot((d) => { d.__gap2 = [{ district: "النرجس", deal_type: "إيجار", property_type: "شقة", demand: 3, budget: 45000, supply: 1, supply_fit: 0 }]; });
+  let r = await call(b.h, { action: "analytics" }, "s2");
+  assert.equal(r.body.gap[0].supply_fit, 0); assert.deepEqual(b.T.__gapCalls, ["v2"]);
+  b = await boot((d) => { d.__noGap2 = true; d.__gap = [{ district: "النرجس", demand: 3, supply: 1 }]; });
+  r = await call(b.h, { action: "analytics" }, "s2");
+  assert.equal(r.body.gap[0].district, "النرجس"); assert.deepEqual(b.T.__gapCalls, ["v2", "v1"]);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

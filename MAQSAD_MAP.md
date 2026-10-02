@@ -1,6 +1,6 @@
 # خريطة مشروع مقصد — MAQSAD_MAP
 
-آخر تحقق: 5b1e24c (+ تغييرات تدقيق المنتج) — 2026-10-02
+آخر تحقق: 2e93a22 (+ الوسيط المسؤول والفرص الضائعة) — 2026-10-02
 
 خريطة ملاحة لـ Claude Code: من أين تبدأ، وما الذي تفتحه، وما الذي لا تحتاج أن تفتحه.
 المراجع بالاسم (ملف + دالة/جدول/action)، بلا أرقام أسطر. الكود الفعلي هو الحكم دائماً.
@@ -27,6 +27,7 @@
 | تصحيح بيانات العميل / حذف العميل | B3 | `api` actions `lead_update`, `lead_delete` · `app.js` (`openLeadEdit`, `askLeadDelete`) |
 | الميزانية الغامضة («45») / حد الحماية / محادثة ما تتقدم | B1 | `wa` (`budgetDoubt`, `DAILY_REPLY_CAP`, `STUCK_TURNS`) · عمود `customers.stale_turns` |
 | المدينة | B1، B5 | `properties.city` · `customers.city` · `wa` (`cityList`, `inventoryText`) · SQL `match_properties_v2`, `ar_norm` |
+| الوسيط المسؤول عن العميل / «عملائي» | B3 | `api` action `lead_assign` (صاحب المكتب فقط)، `teamOf` · عمود `customers.assigned_to` · `app.js` (`assignCard`, `assignTag`، فلتر `mine`) |
 | نتيجة الاتصال | B3 | `api` action `lead_outcome` · `app.js` (`outcomeNote`, `outcomeTag`) |
 | الوضع اليدوي / التدخل | B1، B3 | `api` action `set_mode` · عمود `customers.mode` |
 | إيقاف الرسائل / «ابدأ» | B1 | `wa-webhook/index.ts` (`commandOf`) · `customers.opted_out` |
@@ -83,8 +84,9 @@
 
 ### B3 — شاشة العملاء في التطبيق
 - **الوظيفة**: قائمة العملاء وبطاقة العميل، «ينتظر اتصالك»، تسجيل نتيجة الاتصال، الوضع اليدوي/الآلي.
-- **نقطة الدخول**: `app.js` → `renderToday`, `renderLeads`, `openLead`, `openLeadEdit`, `askLeadDelete` (الشاشات `s-today`, `s-leads`) ← `api` actions `bootstrap`, `leads`, `lead`, `lead_outcome`, `set_mode`, `lead_update`, `lead_delete` (صاحب المكتب فقط؛ حذف فعلي، الرسائل تُحذف معه، وإثبات في `privacy_requests`).
-- **الدوال**: `app.js`: `isQualified`, `needsCall`, `journey`, `handoffOf`, `outcomeNote`, `leadMatches`, `paintAttn`.
+- **نقطة الدخول**: `app.js` → `renderToday`, `renderLeads`, `openLead`, `openLeadEdit`, `askLeadDelete` (الشاشات `s-today`, `s-leads`) ← `api` actions `bootstrap`, `leads`, `lead`, `lead_outcome`, `set_mode`, `lead_update`, `lead_delete` (صاحب المكتب فقط؛ حذف فعلي، الرسائل تُحذف معه، وإثبات في `privacy_requests`)، `lead_assign` (صاحب المكتب يختار الوسيط المسؤول؛ إشعار جوال للوسيط المختار فقط).
+- **القائمة**: الجهاز يحمل آخر ١٠٠ عميل؛ البحث بحرفين فأكثر يسأل `leads` بـ `q` (الاسم/الحي/الملخص/جزء من الجوال) ويضيف الأقدم (`searchOlderLeads`, `leadPool`). `bootstrap` و`leads` يرجعان `team` (أسماء موظفي المكتب النشطين بلا جوالات).
+- **الدوال**: `app.js`: `isQualified`, `needsCall`, `journey`, `handoffOf`, `outcomeNote`, `leadMatches`, `paintAttn`, `assignCard`, `assignNote`, `assignTag`.
 - **الجداول**: `customers`, `messages`, `events`.
 - **يعتمد على**: B2 (جلسة)، B1 (يملأ البيانات).
 - **الاختبار**: `node app/tests/test4.js` · `node app/tests/v16.test.js` · `node supabase/tests/api.test.mjs`.
@@ -142,7 +144,7 @@
 - **الوظيفة**: ملخص الشهر لكل مكتب وللمشغّل، أداء المكتب، الفرص الضائعة، تكلفة الاستخدام.
 - **نقطة الدخول**: `monthly-report/index.ts` → `Deno.serve` (cron `maqsad-monthly-report`) · `api` actions `month_stats`, `analytics`, `platform_usage`.
 - **الدوال**: `app.js`: `renderMonth`, `monthHtml`, `loadGap`, `loadUsage`, `renderUsage`, `priceField`.
-- **SQL**: `office_month_stats`, `platform_usage`, `office_summary`, `demand_gap`, `bump_usage` · جدول `usage_daily`, `events`.
+- **SQL**: `office_month_stats`, `platform_usage`, `office_summary`, `demand_gap_v2` (الحي + نوع الطلب والعقار + وسط ميزانية الطالبين + `supply_fit`، migration 12؛ `analytics` يرجع لـ `demand_gap` إذا ما انشرت), `bump_usage` · جدول `usage_daily`, `events`.
 - **الاختبار**: `node supabase/tests/report.test.mjs` · `node app/tests/test4.js`.
 - **الخطورة**: منخفضة — قراءة فقط، لا يمس العملاء.
 
