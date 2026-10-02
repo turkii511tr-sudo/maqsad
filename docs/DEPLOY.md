@@ -123,8 +123,9 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
 ## ١٢) المزوّد الافتراضي والوسيط المسؤول والفرص الضائعة (٢ أكتوبر ٢٠٢٦)
 
 - **migration 11 (`11_wa_provider_default.sql`) مطبّقة على الإنتاج** بموافقة صاحب المشروع: المكتب الجديد بلا مزوّد يبدأ على `cloud`. بعدها `login_start` حي = 200.
-- **لم يُنشر بعد (ينتظر موافقة):** ترتيب النشر:
-  1. `12_lead_owner.sql` (إضافات فقط: `customers.assigned_to`, `assigned_at`، فهرس، ودالة `demand_gap_v2`). ثم `login_start` حياً.
-  2. `api` مع `notify.ts` (`lead_assign`، `team`، بحث `leads` بـ `q`، `analytics` على `demand_gap_v2`). ثم `get_edge_function` ومطابقة حرفية.
-     `api` قبل الـ migration يكسر `bootstrap` (عمود `assigned_to` في `LEAD_COLS`)، فلا تعكس الترتيب.
-  3. الواجهة: `mkpatch.py` ثم `build_app()`.
+- **منشور على الإنتاج** بموافقة صاحب المشروع، بهذا الترتيب (`api` قبل الـ migration يكسر `bootstrap` لأن `LEAD_COLS` فيها `assigned_to`، فلا تعكس الترتيب):
+  1. `12_lead_owner.sql` باسم `lead_owner_and_demand_gap_v2` (إضافات فقط: `customers.assigned_to`, `assigned_at`، فهرس، ودالة `demand_gap_v2` لـ `service_role` فقط). بعدها `login_start` حي = 200.
+  2. `api` **v18** مع `notify.ts` (`lead_assign`، `team`، بحث `leads` بـ `q`، `analytics` على `demand_gap_v2`، و`bootstrap` يرجع `staff.id`). `get_edge_function` مطابق حرفياً، و`login_start` = 200.
+     v17 نزلت بدون `staff.id` فكان فلتر «عملائي» يطلع فاضي وعلامة «لك» ما تظهر؛ أُصلح في v18 ومعه اختبار في `api.test.mjs` و`app/tests/v17.test.js`.
+  3. الواجهة: `mkpatch.py` (index.html → `01b8d12f…`، app.js → `7d49cb6e…`) ثم `build_app()` = `30398e41…`، مطابق لـ `python3 app/build.py` محلياً. بعدها `login_start` = 200.
+- **باقي يدوي:** رفع الموقع على Netlify (الشبكة هنا تمنع netlify.com).
