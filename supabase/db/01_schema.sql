@@ -103,7 +103,9 @@ create table public.customers (
   first_outcome_at timestamp with time zone,
   outcome_by uuid,
   city text,
-  stale_turns integer not null default 0
+  stale_turns integer not null default 0,
+  assigned_to uuid,
+  assigned_at timestamp with time zone
 );
 
 create table public.events (
@@ -156,7 +158,7 @@ create table public.offices (
   name text not null,
   license_no text not null,
   sector text not null default 'عقار'::text,
-  wa_provider text not null default 'ultramsg'::text,
+  wa_provider text not null default 'cloud'::text,
   wa_instance text,
   wa_token text,
   wa_number text,

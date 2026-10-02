@@ -798,6 +798,42 @@ await test("v16 قائمة المكاتب: «واتساب مربوط» يحتا�
   assert.ok(!JSON.stringify(r.body).includes("EAA"), "رمز الوصول طلع للواجهة");
 });
 
+await test("v17 الوسيط المسؤول: صاحب المكتب يختاره، والوسيط يشوف «عملائي»، وموظف مكتب ثاني مرفوض", async () => {
+  const { T, h } = await boot();
+  let r = await call(h, { action: "bootstrap" }, "s2");
+  assert.deepEqual(r.body.team.map((t) => t.name), ["صاحب", "وسيط"], "الفريق فيه المشغّل أو ناقص");
+  assert.ok(!JSON.stringify(r.body.team).includes("9665000"), "جوالات الموظفين طلعت");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s2" }, "s2");
+  assert.equal(r.status, 403, "الوسيط اختار بنفسه");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s3" }, "s1");
+  assert.equal(r.status, 400, "موظف مكتب ثاني انقبل");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "sa" }, "s1");
+  assert.equal(r.status, 400, "المشغّل انقبل كوسيط");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s2" }, "s1");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.assigned_name, "وسيط");
+  const c = T.customers.find((x) => x.id === "c1");
+  assert.equal(c.assigned_to, "s2"); assert.ok(c.assigned_at);
+  assert.equal(T.events.at(-1).kind, "lead_assigned");
+  r = await call(h, { action: "leads", filter: "mine" }, "s2");
+  assert.deepEqual(r.body.leads.map((l) => l.id), ["c1"]);
+  r = await call(h, { action: "lead", id: "c1" }, "s2");
+  assert.equal(r.body.lead.assigned_name, "وسيط");
+  r = await call(h, { action: "lead_assign", id: "c1", staff_id: null }, "s1");
+  assert.equal(r.status, 200);
+  assert.equal(c.assigned_to, null); assert.equal(c.assigned_at, null);
+});
+
+await test("v17 حذف موظف ما دخل أبد: عملاؤه يرجعون بلا وسيط", async () => {
+  const { T, h } = await boot((d) => {
+    d.staff.push({ id: "s4", office_id: "o1", name: "جديد", phone: "966500000004", role: "agent", active: true });
+    d.customers[5].assigned_to = "s4";
+  });
+  const r = await call(h, { action: "staff_delete", id: "s4" }, "sa");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(T.customers[5].assigned_to, null);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
