@@ -47,7 +47,7 @@ async function fillMin(p) {
     await p.waitForTimeout(400);
     const v = await p.csp();
     ok(p.errors.length === 0 && v.length === 0, "بلا أخطاء ولا مخالفات CSP" + (p.errors.length || v.length ? " — " + p.errors.concat(v).join(" | ") : ""));
-    ok(await p.title() === "مقصد | مساعد واتساب يؤهّل عملاء مكتبك العقاري", "العنوان");
+    ok(await p.title() === "مقصد | من أول رسالة واتساب إلى عميل جاهز لاتصالك", "العنوان");
     ok(await p.$eval("html", (h) => h.lang === "ar" && h.dir === "rtl"), "lang=ar dir=rtl");
     const h1 = await p.$$eval("h1", (x) => x.length);
     ok(h1 === 1, "عنوان رئيسي واحد");
