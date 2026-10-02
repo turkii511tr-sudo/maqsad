@@ -5,7 +5,7 @@
 - كل مجلد داخل `supabase/functions/` دالة مستقلة، وملفها الرئيسي `index.ts`.
 - الدوال `api` و`wa-webhook` و`fal-check` تحتاج معها `notify.ts` (نسخة من `_shared/notify.ts`).
 - كل الدوال تُنشر مع `verify_jwt = false` (الحماية داخل الكود: رابط سري أو توقيع أو جلسة).
-- بعد النشر: `get_edge_function` ثم مطابقة كل ملف بالمستودع حرفاً بحرف (آخر مطابقة كاملة: api v15 وwa-webhook v15، ٢٨ سبتمبر ٢٠٢٦).
+- بعد النشر: `get_edge_function` ثم مطابقة كل ملف بالمستودع حرفاً بحرف (آخر مطابقة كاملة: wa-webhook نسخة ١٧ = v5.4، ٢ أكتوبر ٢٠٢٦).
 - بسطر الأوامر:
 
 ```bash
@@ -112,3 +112,10 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
 
 اختبار SQL محلياً (بدون لمس الإنتاج): Postgres 16 محلي، الجداول `customers` و`properties` و`v_listable_properties`
 و`annual_budget` و`match_properties` من الملفين، ثم الـ migration.
+
+## ١١) wa-webhook v5.4 (٢ أكتوبر ٢٠٢٦)
+
+**نُشر بموافقة صاحب المشروع:** `wa-webhook` نسخة ١٧ (v5.4، طلب الدمج ٢) مع `notify.ts`، ومطابقة حرفية بعد النشر.
+لا تغيير في القاعدة ولا في `systemPrompt` و`aiUserPrompt` (فما يحتاج إعادة اختبار الإخفاء الحي).
+**الموقع لم يُرفع بعد:** شبكة بيئة العمل منعت نتليفاي مرة ثانية (403). نسخة جاهزة للرفع اليدوي:
+`/mnt/project-files/deploy/maqsad-site-2026-10-02.zip` (محتوى `site/dist/`) — تُسحب إلى صفحة Deploys في maqsad-site.
