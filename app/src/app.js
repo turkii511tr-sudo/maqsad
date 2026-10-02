@@ -1820,7 +1820,7 @@ function switchOffice(o, btn) {
 }
 
 function openOffice(o, prefill) {
-  var v = o || Object.assign({ msg_quota: 40, wa_provider: "cloud" }, prefill || {});
+  var v = o || Object.assign({ msg_quota: 35, wa_provider: "cloud" }, prefill || {});
   openSheet(o ? "تعديل: " + o.name : "مكتب جديد",
     '<div class="field"><label for="oName">اسم المكتب</label>' +
       '<input id="oName" class="input" value="' + esc(v.name || "") + '" placeholder="مكتب الأفق العقاري"></div>' +
@@ -1849,8 +1849,8 @@ function openOffice(o, prefill) {
         '<input id="oNum" class="input ltr" type="tel" inputmode="tel" value="' + esc(v.wa_number ? fmtPhone(v.wa_number) : "") + '">' +
         '<p class="hint" id="oNumHint"></p></div>' +
       '<div class="field"><label for="oQuota">حد الحماية اليومي</label>' +
-        '<input id="oQuota" class="input" type="number" inputmode="numeric" value="' + esc(v.msg_quota || 40) + '">' +
-        '<p class="hint">أقصى ردود آلية لنفس العميل خلال ٢٤ ساعة (أقله ٤٠). مو معيار التسليم: المساعد يسلّم لما يكتمل الطلب أو يحتاج العميل موظف.</p></div>' +
+        '<input id="oQuota" class="input" type="number" inputmode="numeric" value="' + esc(v.msg_quota || 35) + '">' +
+        '<p class="hint">أقصى ردود آلية لنفس العميل خلال ٢٤ ساعة (أقله ٣٥). مو معيار التسليم: المساعد يسلّم لما يكتمل الطلب أو يحتاج العميل موظف.</p></div>' +
     "</div>" +
     '<div class="field"><label for="oTg">معرّف محادثة تيليجرام</label>' +
       '<input id="oTg" class="input ltr" value="' + esc(v.telegram_chat_id || "") + '" placeholder="-100..."></div>' +

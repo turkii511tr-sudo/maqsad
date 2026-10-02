@@ -60,7 +60,7 @@
 - **الوظيفة**: يستقبل رسائل العملاء، يفهمها بالذكاء الاصطناعي، يرد، ويسلّم العميل المؤهل للمكتب.
 - **نقطة الدخول**: `wa` → `Deno.serve` (GET = تحقق ميتا، POST بتوقيع `x-hub-signature-256` = ميتا عبر `handleMeta`، POST بـ `?k=` = UltraMsg).
 - **الدوال الأساسية**: `handleMeta`, `cloudOffice`, `processIncoming`, `processTurn`, `commandOf`, `askAI`, `callModel`, `systemPrompt`, `aiUserPrompt`, `recentHistory`, `officeInventory`/`inventoryText`/`cityList`, `budgetDoubt`/`bareNumbers`, `matchProperties`, `saveCustomer`, `maskText`/`unmask`/`unmaskAI`, `nextQuestion`, `formatProperties`, `handoff`, `sendWhatsApp`, `notifyOffice`, `handleVoice`, `mediaNudge`, `metaSignatureOk`.
-- **التسليم للوسيط** (v5.2) بحالة الطلب لا بعدد الرسائل: اكتمال الطلب (`qualified`) · كلمة موظف أو حكم الذكاء (`human`) · طلب معاينة (`human`، route `viewing_handoff`) · مالك يعرض (`owner_offer`) · تعذّر الذكاء (`ai_error`) · حماية فقط (`quota`): `STUCK_TURNS` ردود بلا معلومة جديدة، أو `max(msg_quota, DAILY_REPLY_CAP)` رداً آلياً خلال ٢٤ ساعة. العميل الراجع بطلب مكتمل (`handed_at` + `qualified`) يُسأل «نفس طلبك السابق؟» ولا يُسلّم إلا إذا أكد (`same_request`) أو غيّر.
+- **التسليم للوسيط** (v5.2) بحالة الطلب لا بعدد الرسائل: اكتمال الطلب (`qualified`) · كلمة موظف أو حكم الذكاء (`human`) · طلب معاينة (`human`، route `viewing_handoff`) · مالك يعرض (`owner_offer`) · تعذّر الذكاء (`ai_error`) · حماية فقط (`quota`): `STUCK_TURNS` ردود بلا معلومة جديدة، أو `max(msg_quota, DAILY_REPLY_CAP)` رداً آلياً خلال ٢٤ ساعة. العميل الراجع بطلب مكتمل (`handed_at` + `qualified`) يُسأل «نفس طلبك السابق؟» ولا يُسلّم إلا إذا أكد (`same_request`) أو غيّر. عميل مُسلّم بلا نتيجة اتصال (أو «ما رد») لأكثر من `REOPEN_DAYS` (٣) يرجع للمساعد إذا راسل، مع تنبيه المكتب (حدث `handoff_reopened`)؛ ما يشمل «taken» ولا من سُجّل له تواصل.
 - **ما يصل للذكاء**: السياق المسجل + آخر ٨ رسائل (`recentHistory`) + مخزون المكتب المرخّص كأحياء ونطاق أسعار (`v_listable_properties`، فقط إذا فال سارية) + نطاق المدن. كل ذلك يمر بالإخفاء.
 - **الجداول / SQL**: `customers`, `messages`, `events`, `offices`, `staff`, `privacy_requests`, view `v_listable_properties` · `ingest_message`, `finish_turn`, `finish_processing`, `match_properties_v2` (ويرجع لـ `match_properties` إذا ما انشرت migration 10), `bump_usage`.
 - **تكاملات**: Meta Graph API، UltraMsg (انتقالي)، OpenAI (فهم + تحويل صوت).
@@ -241,7 +241,6 @@
 - **`app_pages` ودوال `app`**: ما إذا كانت هناك slugs غير `app` في القاعدة الحية — غير مؤكد.
 - **مطابقة الإنتاج**: حتى ٢ أكتوبر ٢٠٢٦ المنشور هو api v15 وwa-webhook v15؛ تغييرات v16/v5.2 وmigration 10 في المستودع فقط بانتظار موافقة النشر.
 - **عقارات بمدينة «الرياض» قبل migration 10**: القيمة جاءت من القيمة الافتراضية للعمود لا من اختيار المكتب. لم تُغيَّر (لا تخمين). القيمة الافتراضية للعمود باقية حتى تُنشر `api` v16 (حذفها قبلها يكسر إضافة العقار).
-- **إعادة فتح محادثة مُسلّمة تلقائياً** (عميل `manual` يرجع بعد أيام بلا رد من المكتب): غير موجودة — البوت صامت وينبّه الوسيط. قرار تجاري معلق عند صاحب المشروع.
 
 ---
 

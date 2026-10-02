@@ -1,4 +1,5 @@
 // مقصد — محرك استقبال واتساب (v5.2)
+// v5.3: حد الحماية ٣٥ رداً باليوم · عميل مُسلّم بلا نتيجة اتصال ٣ أيام يرجع للمساعد إذا راسل (مع تنبيه المكتب)
 // v5.2: الذكاء يشوف آخر المحادثة ومخزون المكتب (مدن وأحياء ونطاق أسعار) فيجاوب «وش المتوفر» قبل ما يسأل ·
 //       الميزانية الغامضة («45») ما تُحفظ ويُسأل العميل «تقصد 45 ألف؟» · المدينة في الطلب والمطابقة
 //       (match_properties_v2) وفترة الميزانية تُحترم · التسليم بحالة الطلب لا بعدد الرسائل: حد يومي للحماية
@@ -667,7 +668,9 @@ const MAX_ROUNDS = 4;
 const STUCK_TURNS = 6;
 // ردود آلية لنفس العميل خلال ٢٤ ساعة (دوران أو عبث). التأهيل الكامل عادةً ٤–٨ ردود؛
 // إذا حد المكتب (msg_quota) أعلى يُعتمد هو
-const DAILY_REPLY_CAP = 40;
+const DAILY_REPLY_CAP = 35;
+// عميل سُلّم للوسيط وما سُجّلت له نتيجة اتصال خلال هذه المدة: إذا راسل، المساعد يرجع يخدمه بسياق طلبه
+const REOPEN_DAYS = 3;
 
 // ===== المعالجة المشتركة لكل مزوّد =====
 async function processIncoming(office: any, m: Incoming) {
@@ -831,6 +834,22 @@ async function processTurn(
     return { ok: true, route: "opted_out" };
   }
 
+  // ===== عميل مُسلّم ما تابعه أحد: بعد REOPEN_DAYS بلا نتيجة اتصال يرجع للمساعد =====
+  // ما يشمل محادثة استلمها موظف بنفسه («taken») ولا عميل سُجّل له تواصل أو معاينة أو صفقة
+  let reopened = false;
+  if (c.mode === "manual" && c.handed_at && CALLABLE.includes(c.handoff_reason ?? "") &&
+      (!c.outcome || c.outcome === "no_answer") &&
+      Date.now() - new Date(c.handed_at).getTime() > REOPEN_DAYS * 864e5) {
+    reopened = true;
+    c.mode = "auto";
+    await saveCustomer(office, customer_id, { mode: "auto", stale_turns: 0 });
+    await logEvent(office.id, "info", "handoff_reopened", { customer: customer_id, reason: c.handoff_reason });
+    await notifyOffice(office,
+      `↩️ عميل رجع يراسل بعد ${REOPEN_DAYS} أيام من تسليمه بدون نتيجة اتصال\n\n` +
+      `👤 ${c.name ?? "—"}\n📱 ${phone}\n💬 ${c.buffer}\n📝 ${c.summary ?? "—"}\n\n` +
+      `المساعد رجع يكلمه بسياق طلبه السابق. إذا تبي تمسكه أنت: «استلم المحادثة» من بطاقته.\n\n🔗 ${link}`);
+  }
+
   // ===== وضع التدخل اليدوي: البوت صامت — لكن الوسيط يُنبّه =====
   if (c.mode === "manual") {
     const last = c.manual_pinged_at ? new Date(c.manual_pinged_at).getTime() : 0;
@@ -878,13 +897,13 @@ async function processTurn(
   const cities = cityList(stock);
   const multiCity = cities.length > 1;
   // عميل سبق تسليمه بطلب مكتمل ثم رجع للبوت: نتأكد هل هو نفس الطلب قبل ما نسلّمه من جديد
-  const returning = !!c.handed_at && c.status === "qualified";
+  const returning = !!c.handed_at && (c.status === "qualified" || reopened);
   const ctx: TurnCtx = {
     history,
     inventory: canList ? (inventoryText(stock) || "لا يوجد عقار معروض حالياً") : "",
     scope: cities.length === 1 ? `مدينة واحدة: ${cities[0]}` : multiCity ? `أكثر من مدينة: ${cities.join("، ")}` : "",
     returning: returning
-      ? `طلب سابق مكتمل سُلّم للمستشار: ${[c.deal_type, c.property_type, c.city, c.location,
+      ? `${c.status === "qualified" ? "طلب سابق مكتمل سُلّم للمستشار" : "طلب سابق غير مكتمل سُلّم للمستشار"}: ${[c.deal_type, c.property_type, c.city, c.location,
           c.budget ? `${sar(Number(c.budget))} ${c.budget_period ?? ""}`.trim() : ""].filter(Boolean).join(" · ")}`
       : "",
   };

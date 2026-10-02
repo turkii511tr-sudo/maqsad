@@ -349,7 +349,7 @@ await test("أسباب التسليم: موظف · حد الحماية اليو�
   await handler(ultra("966500000031", "ابي اكلم موظف"));
   assert.equal(T.customers[0].handoff_reason, "human");
 
-  // حد المكتب الصغير (1) ما يسلّم العميل: الحد حماية فقط، وأقله ٤٠ رداً آلياً خلال ٢٤ ساعة
+  // حد المكتب الصغير (1) ما يسلّم العميل: الحد حماية فقط، وأقله ٣٥ رداً آلياً خلال ٢٤ ساعة
   ({ T, client, f } = setup());
   T.offices[0].msg_quota = 1;
   ({ handler } = await loadFunction(FN, client, f));
@@ -357,7 +357,9 @@ await test("أسباب التسليم: موظف · حد الحماية اليو�
   await handler(ultra("966500000032", "عندكم شقق؟"));
   assert.equal(T.customers[0].mode, "auto", "حد المكتب الصغير سلّم العميل");
   const now = new Date().toISOString();
-  for (let i = 0; i < 40; i++) T.messages.push({ customer_id: T.customers[0].id, direction: "out", body: "x", created_at: now });
+  for (let i = 0; i < 32; i++) T.messages.push({ customer_id: T.customers[0].id, direction: "out", body: "x", created_at: now });
+  await handler(ultra("966500000032", "طيب"));   // الرد رقم ٣٥ ما زال آلياً
+  assert.equal(T.customers[0].mode, "auto", "سلّم قبل ٣٥ رداً");
   await handler(ultra("966500000032", "طيب"));
   assert.equal(T.customers[0].handoff_reason, "quota");
 

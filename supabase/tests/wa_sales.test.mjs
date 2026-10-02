@@ -241,6 +241,42 @@ await test("قاعدة لم تُطبّق migration 10 بعد: حفظ العمي�
   assert.ok(T.events.some((e) => e.kind === "customer_save_failed"));
 });
 
+
+// ---------- عميل مُسلّم ما تابعه أحد ----------
+const handedCustomer = (id, phone, extra = {}) => ({ id, office_id: "o1", wa_id: phone + "@c.us", phone, mode: "manual",
+  status: "qualified", deal_type: "إيجار", property_type: "شقة", location: "النرجس", city: "الرياض",
+  budget: 45000, budget_period: "سنوي", handoff_reason: "qualified", msg_count: 8, buffer: "", recent_ids: [],
+  opted_out: false, disclosed_at: "x", handed_at: new Date(Date.now() - 4 * 864e5).toISOString(), ...extra });
+
+await test("مُسلّم قبل ٤ أيام بلا نتيجة اتصال: المساعد يرجع يكلمه بسياق طلبه ويُنبّه المكتب", async () => {
+  const { T, f, handler } = await setup();
+  T.customers.push(handedCustomer("h1", "966500000140"));
+  aiNext = { ...base, reply: "حياك الله من جديد، تقصد نفس طلبك: شقة إيجار بالنرجس بحدود 45 ألف؟", budget: "45000", budget_period: "سنوي", status: "مؤهل" };
+  await handler(msg("966500000140", "السلام عليكم للحين تبحثون لي؟"));
+  const c = T.customers.find((x) => x.id === "h1");
+  assert.equal(c.mode, "auto"); assert.equal(waOut(f).length, 1);
+  assert.ok(waOut(f)[0].startsWith("حياك الله من جديد"));
+  assert.ok(tg(f).some((t) => t.includes("رجع يراسل بعد 3 أيام")));
+  assert.ok(T.events.some((e) => e.kind === "handoff_reopened"));
+});
+
+await test("مُسلّم قبل يوم واحد: المساعد ساكت والوسيط يُنبّه فقط", async () => {
+  const { T, f, handler } = await setup();
+  T.customers.push(handedCustomer("h2", "966500000141", { handed_at: new Date(Date.now() - 864e5).toISOString() }));
+  await handler(msg("966500000141", "هلا"));
+  assert.equal(T.customers.find((x) => x.id === "h2").mode, "manual"); assert.equal(waOut(f).length, 0);
+});
+
+await test("ما يرجع للمساعد إذا الموظف استلمها بنفسه أو سجّل تواصل", async () => {
+  for (const extra of [{ handoff_reason: "taken" }, { outcome: "contacted" }, { outcome: "viewing" }]) {
+    const { T, f, handler } = await setup();
+    T.customers.push(handedCustomer("h3", "966500000142", extra));
+    await handler(msg("966500000142", "هلا"));
+    assert.equal(T.customers.find((x) => x.id === "h3").mode, "manual", JSON.stringify(extra));
+    assert.equal(waOut(f).length, 0, JSON.stringify(extra));
+  }
+});
+
 for (const r of results) console.log(r.join("  "));
 const bad = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - bad}/${results.length} passed`);
