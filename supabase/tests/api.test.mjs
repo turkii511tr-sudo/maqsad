@@ -803,6 +803,7 @@ await test("v17 الوسيط المسؤول: صاحب المكتب يختاره�
   let r = await call(h, { action: "bootstrap" }, "s2");
   assert.deepEqual(r.body.team.map((t) => t.name), ["صاحب", "وسيط"], "الفريق فيه المشغّل أو ناقص");
   assert.ok(!JSON.stringify(r.body.team).includes("9665000"), "جوالات الموظفين طلعت");
+  assert.equal(r.body.staff.id, "s2", "التطبيق ما يعرف معرّف الموظف نفسه (فلتر «عملائي» يطلع فاضي)");
   r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s2" }, "s2");
   assert.equal(r.status, 403, "الوسيط اختار بنفسه");
   r = await call(h, { action: "lead_assign", id: "c1", staff_id: "s3" }, "s1");

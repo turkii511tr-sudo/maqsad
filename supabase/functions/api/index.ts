@@ -750,7 +750,7 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
   }
 
   const meBlock = () => ({
-    staff: { name: ctx.staff.name, role: ctx.staff.role, phone: ctx.staff.phone },
+    staff: { id: ctx.staff.id, name: ctx.staff.name, role: ctx.staff.role, phone: ctx.staff.phone },
     is_super: isSuper,
     office: {
       id: office.id, name: office.name, code: office.code, license_no: office.license_no,
