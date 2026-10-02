@@ -1,4 +1,6 @@
-// مقصد — محرك استقبال واتساب (v5.3)
+// مقصد — محرك استقبال واتساب (v5.4)
+// v5.4: «أنا موظف…» ما تُعد طلب تحويل (فقط «موظف» وحدها أو طلب صريح) · عقار من حي غير المطلوب ما يُعرض
+//       كأنه يناسب الطلب: إذا فيه بالحي المطلوب يُعرض وحده، وإلا تُعرض البدائل صراحة «أقرب الخيارات»
 // v5.3: حد الحماية ٣٥ رداً باليوم · عميل مُسلّم بلا نتيجة اتصال ٣ أيام يرجع للمساعد إذا راسل (مع تنبيه المكتب)
 // v5.2: الذكاء يشوف آخر المحادثة ومخزون المكتب (مدن وأحياء ونطاق أسعار) فيجاوب «وش المتوفر» قبل ما يسأل ·
 //       الميزانية الغامضة («45») ما تُحفظ ويُسأل العميل «تقصد 45 ألف؟» · المدينة في الطلب والمطابقة
@@ -33,8 +35,13 @@ const db = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+// «موظف» وحدها في سطر (الإفصاح يقول اكتب «موظف») أو بطلب صريح («أبي موظف»، «أكلم موظف»، «مع موظف») —
+// أما «أنا موظف حكومي وأبي شقة» فوصف للعميل، مو طلب تحويل
 const KEYWORDS =
-  /(حولني|أبي المالك|ابي المالك|أكلم المالك|اكلم المالك|وسيط بشري|أبي وسيط|ابي وسيط|موظف|كلموني|اتصل فيني|دق علي|يدق علي|إنسان حقيقي|انسان حقيقي|شخص حقيقي|خدمة العملاء)/i;
+  /(حولني|أبي المالك|ابي المالك|أكلم المالك|اكلم المالك|وسيط بشري|أبي وسيط|ابي وسيط|كلموني|اتصل فيني|دق علي|يدق علي|إنسان حقيقي|انسان حقيقي|شخص حقيقي|خدمة العملاء|^\s*(?:ال)?موظف\s*[.!؟?]*\s*$|(?:أبي|ابي|أبغى|ابغى|أبغا|ابغا|أبغي|ابغي|بغيت|أريد|اريد|ودي|أكلم|اكلم|كلمني|وصلني ب|مع)\s+(?:أ?كلم\s+|أحد\s+|احد\s+)?(?:ال)?موظف(?!ين|ه|ة))/im;
+
+// صوتية فوق الحد: نص معلَّم يمر بمسار الرسائل ويُسلَّم لموظف (ما نعتمد على كلمة «موظف» في النص)
+const VOICE_OVER_LIMIT = "🎤 [رسالة صوتية ما تحوّلت لنص لأنها فوق الحد — تحتاج موظف يسمعها من جوال المكتب]";
 
 const HANDOFF =
   "يا هلا بك يا غالي، حوّلنا طلبك للمستشار العقاري المعتمد وبيتواصل معك بأقرب وقت بإذن الله.";
@@ -867,7 +874,7 @@ async function processTurn(
     return { ok: true, route: "silent_notified" };
   }
 
-  const wantsHuman = KEYWORDS.test(c.buffer);
+  const wantsHuman = KEYWORDS.test(c.buffer) || String(c.buffer ?? "").includes(VOICE_OVER_LIMIT);
   // حد حماية فقط (دوران أو عبث)، مو معيار تسليم: ردود آلية لنفس العميل خلال ٢٤ ساعة
   const cap = Math.max(office.msg_quota ?? 0, DAILY_REPLY_CAP);
   let overCap = false;
@@ -992,23 +999,33 @@ async function processTurn(
     outgoing = said && !/؟/.test(said) ? said : QUALIFIED_LEAD;
 
     let rows: any[] = [];
+    const districts = String(patch.location ?? "")
+      .split(/[,،]/).map((x) => x.trim().replace(/^حي\s+/, "")).filter(Boolean); // الفاصلة العربية «،» أيضاً
     if (canList) {
-      const districts = String(patch.location ?? "")
-        .split(/[,،]/).map((x) => x.trim().replace(/^حي\s+/, "")).filter(Boolean); // الفاصلة العربية «،» أيضاً
       rows = await matchProperties(office, {
         deal: patch.deal_type, type: patch.property_type, districts, budget: patch.budget,
         rooms: patch.rooms, period: patch.budget_period, city: patch.city,
       });
     }
 
+    // المطابقة تعطي الحي وزناً لكن ما تشترطه: عقار بالسعر والغرف الصح في حي ثاني ممكن يرجع.
+    // ما نقول عنه «يناسب طلبك» — إذا فيه شي بالحي المطلوب نعرضه وحده، وإلا نقولها صريحة: أقرب البدائل
+    const inArea = districts.length ? rows.filter((p: any) => inDistricts(p.district, districts)) : rows;
+    const alternatives = rows.length > 0 && inArea.length === 0;
+    if (!alternatives) rows = inArea;
+
     outgoing = !canList
       ? `${outgoing}\n\n${LICENSE_HOLD}`
+      : alternatives
+      ? `${outgoing}\n\nما عندنا حالياً في ${districts.join(" أو ")} شي يناسب طلبك بالضبط، وهذي أقرب الخيارات المتوفرة:\n\n` +
+        `${formatProperties(rows)}\n\nالمستشار العقاري بيتواصل معك بخيارات إضافية ولترتيب المعاينة.`
       : rows.length
       ? `${outgoing}\n\nهذي خيارات متوفرة عندنا تناسب طلبك:\n\n${formatProperties(rows)}\n\nالمستشار العقاري بيتواصل معك لترتيب المعاينة.`
       : `${outgoing}\n\n${NO_MATCH}`;
 
     Object.assign(patch, handoff("qualified"));
-    route = !canList ? "qualified_fal_expired" : rows.length ? "qualified_with_matches" : "qualified_no_match";
+    route = !canList ? "qualified_fal_expired" : alternatives ? "qualified_alternatives"
+      : rows.length ? "qualified_with_matches" : "qualified_no_match";
 
     await notifyOffice(office,
       `🎯 عميل مؤهل — جاهز للإغلاق\n\n👤 ${patch.name ?? "—"}\n📱 ${phone}\n` +
@@ -1019,6 +1036,9 @@ async function processTurn(
       `📝 ${patch.summary ?? "—"}\n\n` +
       (!canList
         ? `⛔ ما عُرضت عليه عقارات لأن رخصة فال للمكتب منتهية. جدّدوها وأرسلوا صورة الشهادة الجديدة لمقصد.`
+        : alternatives
+        ? `⚠️ ما فيه عقار في الحي المطلوب — عُرضت عليه بدائل من أحياء ثانية:\n` +
+          `${rows.map((p: any) => `• ${p.title} (${p.district})`).join("\n")}`
         : rows.length
         ? `العقارات المعروضة عليه:\n${rows.map((p: any) => `• ${p.title} (${p.grade} ${p.score}٪)`).join("\n")}`
         : `⚠️ لا يوجد عقار مطابق في مخزونك — فرصة ضائعة`) +
@@ -1077,6 +1097,15 @@ async function matchProperties(office: any, q: Record<string, any>) {
   await logEvent(office.id, "warn", "match_v2_failed", { error: String(r.error.message ?? r.error).slice(0, 200) });
   const old = await db.rpc("match_properties", base);
   return old.data ?? [];
+}
+
+// نفس تطبيع ar_norm في القاعدة: «حي النرجس» = «النرجس»، «المنتزة» = «المنتزه»
+const arNorm = (t: unknown) =>
+  String(t ?? "").trim().replace(/^\s*(حي|مدينة|مدينه)\s+/, "")
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").toLowerCase();
+function inDistricts(district: unknown, wanted: string[]) {
+  const d = arNorm(district);
+  return !!d && wanted.some((w) => { const x = arNorm(w); return !!x && (d.includes(x) || x.includes(d)); });
 }
 
 // حفظ بيانات العميل: الخطأ ما يمر بصمت، وإذا أعمدة migration 10 ناقصة نحفظ الباقي
@@ -1247,10 +1276,9 @@ async function handleVoice(office: any, v: Voice) {
     if (sec >= VOICE_MONTHLY_MIN_PER_OFFICE * 60) limit = "office";
   }
   if (limit) {
-    // تعدّى الحد: ما نقول للعميل «وصلت الحد» — نسلّم المحادثة لموظف يسمعها (كلمة «موظف» تفعّل التسليم)
+    // تعدّى الحد: ما نقول للعميل «وصلت الحد» — نسلّم المحادثة لموظف يسمعها (النص المعلَّم يفعّل التسليم)
     await logEvent(office.id, "warn", "voice_limit", { k, scope: limit });
-    return processIncoming(office, { ...msg,
-      body: "🎤 [رسالة صوتية ما تحوّلت لنص لأنها فوق الحد — تحتاج موظف يسمعها من جوال المكتب]" });
+    return processIncoming(office, { ...msg, body: VOICE_OVER_LIMIT });
   }
 
   let heard: { text: string; sec: number };

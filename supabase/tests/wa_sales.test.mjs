@@ -277,6 +277,51 @@ await test("ما يرجع للمساعد إذا الموظف استلمها بن
   }
 });
 
+// ---------- v5.4: كلمة «موظف» ----------
+await test("«أنا موظف حكومي وأبي شقة» وصف، مو طلب تحويل: يكمل المساعد", async () => {
+  const { T, f, handler } = await setup();
+  aiNext = { ...base, reply: "حياك الله، أي حي تفضّل؟", location: "" };
+  await handler(msg("966500000150", "السلام عليكم انا موظف حكومي وابي شقة ايجار"));
+  assert.equal(T.customers[0].mode, "auto");
+  assert.ok(!tg(f).some((t) => t.includes("تواصل بشري")), "سُلّم بسبب كلمة موظف");
+  assert.ok(f.calls.some((c) => c.url.includes("api.openai.com")), "ما وصل للذكاء");
+});
+
+await test("«موظف» وحدها، «ابي موظف»، «ابغى اكلم موظف»، «ودي اتكلم مع موظف»: تحويل", async () => {
+  for (const [i, body] of ["موظف", "ابي موظف", "ابغى اكلم موظف", "ودي اتكلم مع موظف", "شكرا\nموظف"].entries()) {
+    const { T, handler } = await setup();
+    await handler(msg("96650000016" + i, body));
+    assert.equal(T.customers[0].mode, "manual", body);
+    assert.equal(T.customers[0].handoff_reason, "human", body);
+  }
+});
+
+// ---------- v5.4: الحي المطلوب ----------
+const QUAL = { ...base, reply: "أبشر", budget: "45000", budget_period: "سنوي", status: "مؤهل" };
+const prop = (title, district) => ({ title, city: "الرياض", district, rooms: 3, price: 44000,
+  ad_license_no: "7200034512", score: 60, grade: "بديل جيد" });
+
+await test("عقار من حي ثاني ما يُعرض كأنه «يناسب طلبك» إذا فيه عقار بالحي المطلوب", async () => {
+  const { T, f, handler } = await setup();
+  T.__matches = [prop("شقة النرجس A12", "حي النرجس"), prop("شقة الملقا B3", "الملقا")];
+  aiNext = QUAL;
+  const r = await (await handler(msg("966500000170", "شقة ايجار بالنرجس 45 الف سنوي"))).json();
+  assert.equal(r.route, "qualified_with_matches");
+  assert.ok(waOut(f)[0].includes("شقة النرجس A12") && !waOut(f)[0].includes("الملقا"), waOut(f)[0]);
+});
+
+await test("ما فيه شي بالحي المطلوب: البدائل تُعرض صراحة «أقرب الخيارات»، والمكتب يعرف", async () => {
+  const { T, f, handler } = await setup();
+  T.__matches = [prop("شقة الملقا B3", "الملقا")];
+  aiNext = QUAL;
+  const r = await (await handler(msg("966500000171", "شقة ايجار بالنرجس 45 الف سنوي"))).json();
+  assert.equal(r.route, "qualified_alternatives");
+  const out = waOut(f)[0];
+  assert.ok(out.includes("ما عندنا حالياً في النرجس") && out.includes("أقرب الخيارات") && !out.includes("تناسب طلبك:"), out);
+  assert.ok(tg(f).some((t) => t.includes("ما فيه عقار في الحي المطلوب") && t.includes("الملقا")));
+  assert.equal(T.customers[0].handoff_reason, "qualified");
+});
+
 for (const r of results) console.log(r.join("  "));
 const bad = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - bad}/${results.length} passed`);
