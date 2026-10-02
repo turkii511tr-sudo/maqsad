@@ -291,6 +291,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 
 .search{position:relative;margin-bottom:var(--s3)}
 .search .input{padding-inline-start:40px}
+.city-filter{margin-bottom:var(--s3)}
 .search svg{position:absolute;inset-inline-start:13px;top:50%;transform:translateY(-50%);
   width:17px;height:17px;stroke:var(--ink-3);fill:none;stroke-width:2;pointer-events:none}
 
@@ -558,6 +559,9 @@ h4.sub{font-size:15.5px;font-weight:600;margin:0 0 var(--s3)}
 
 /* المكاتب: اللي يحتاج انتباه يتميّز بخط جانبي */
 .office-row.needs{box-shadow:inset -3px 0 0 var(--warn)}
+.office-row .why{font-size:12.5px;color:var(--ink-2);white-space:normal;overflow:visible;text-overflow:clip;line-height:1.6}
+.office-row .why.hot{color:var(--danger)}
+.office-row .mute-s{font-size:12px;color:var(--ink-3)}
 .office-row .fal-line{display:flex;gap:6px;flex-wrap:wrap}
 
 /* سجل تعديلات المدير */
@@ -653,3 +657,10 @@ a.btn{text-decoration:none}
 .pk-row .s{display:block;color:var(--ink-3);font-size:14px}
 .code-big{direction:ltr;text-align:center;font-family:var(--f-display);font-size:40px;font-weight:700;letter-spacing:.3em;
   padding:var(--s4);margin:var(--s4) 0;border-radius:var(--r);background:var(--sunk)}
+
+/* بطاقة العميل: تصحيح البيانات والحذف */
+.card-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:var(--s3)}
+.card-hd h3{margin:0}
+.lead-del{margin-top:var(--s4);display:flex;justify-content:flex-start}
+.confirm-del{width:100%;border-color:var(--danger)}
+.btn.danger-solid{background:var(--danger);color:#fff;border:0}

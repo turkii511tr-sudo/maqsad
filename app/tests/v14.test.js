@@ -74,6 +74,7 @@ async function addProp(p) {
   await p.click('.nav button[data-screen="s-stock"]');
   await p.click('#btnNewProp');
   await p.click('[data-name="deal"][data-v="إيجار"]'); await p.click('[data-name="type"][data-v="شقة"]'); await p.click('#wzNext');
+  await p.fill('#wzCity', 'الرياض');
   await p.fill('#wzDistrict', 'النرجس');
   await p.fill('#wzRooms', '3');
   await p.click('#wzNext');

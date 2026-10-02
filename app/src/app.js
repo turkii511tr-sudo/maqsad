@@ -14,7 +14,7 @@ var S = {
   offices: [], curOffice: null, editOffice: null,
   leads: [], props: [], status: null,
   leadFilter: "all", leadQuery: "",
-  stockFilter: "all", stockQuery: "",
+  stockFilter: "all", stockQuery: "", stockCity: "",
   signups: [], signupFilter: "new", signupsNew: 0,
   pre: null, booted: false,
   month: {}, monthSel: "cur", usage: {}, usageSel: "cur",
@@ -107,7 +107,7 @@ var ICON = {
 /* ---------- نتيجة الاتصال وسبب التسليم وحالة العقار ---------- */
 var CALLABLE = ["qualified", "human", "quota", "owner_offer", "ai_error"];
 var HANDOFF = {
-  qualified: "عميل مؤهل", human: "طلب موظف", quota: "طالت محادثته",
+  qualified: "عميل مؤهل", human: "طلب موظف أو معاينة", quota: "المحادثة ما تقدّمت",
   owner_offer: "مالك يعرض عقاره", ai_error: "تعذّر فهمه آلياً", taken: "استلمتها بنفسك",
 };
 var OUTCOME_ORDER = ["no_answer", "contacted", "viewing", "deal", "lost"];
@@ -1183,6 +1183,7 @@ function openLead(id) {
       ["الجوال", l.phone],
       ["نوع الطلب", l.deal_type],
       ["نوع العقار", l.property_type],
+      ["المدينة", l.city],
       ["الحي", l.location],
       ["الميزانية", l.budget ? money(l.budget) + " ريال " + (l.budget_period || "") : null],
       ["عدد الغرف", l.rooms],
@@ -1208,7 +1209,8 @@ function openLead(id) {
         '<p class="hint" id="outcomeNote">' + esc(outcomeNote(l)) + "</p>" +
       "</div>" +
       (l.summary ? '<div class="card" style="margin:14px 0"><h3>ملخص الذكاء الاصطناعي</h3><p style="font-size:14px;line-height:1.8;color:var(--ink-2)">' + esc(l.summary) + "</p></div>" : "") +
-      '<div class="card" style="margin-bottom:14px"><h3>طلب العميل</h3><dl class="dl">' +
+      '<div class="card" style="margin-bottom:14px" id="leadReq"><div class="card-hd"><h3>طلب العميل</h3>' +
+        '<button type="button" class="linkbtn" id="leadEdit">تصحيح البيانات</button></div><dl class="dl">' +
         rows.map(function (p) {
           return "<div><dt>" + esc(p[0]) + '</dt><dd class="num">' + esc(p[1]) + "</dd></div>";
         }).join("") +
@@ -1224,7 +1226,8 @@ function openLead(id) {
         '<button class="btn ghost" id="toggleMode"' +
           (l.opted_out ? ' disabled title="العميل كتب «توقف» — لا يعود للبوت إلا إذا كتب «ابدأ»"' : "") + ">" +
           (l.mode === "manual" ? "أعده للبوت" : "استلم المحادثة") + "</button>" +
-      "</div><div id=\"leadMsg\"></div>";
+      "</div><div id=\"leadMsg\"></div>" +
+      (canDeleteLead() ? '<div class="lead-del"><button type="button" class="btn danger sm" id="leadDel">حذف العميل</button></div>' : "");
 
     openSheet(l.name || l.phone, html);
 
@@ -1252,6 +1255,9 @@ function openLead(id) {
       })(chips[ci]);
     }
 
+    $("#leadEdit").onclick = function () { openLeadEdit(l); };
+    if ($("#leadDel")) $("#leadDel").onclick = function () { askLeadDelete(l); };
+
     $("#toggleMode").onclick = function () {
       var b = this; b.disabled = true;
       var next = l.mode === "manual" ? "auto" : "manual";
@@ -1269,19 +1275,121 @@ function openLead(id) {
   });
 }
 
+
+/* ---------- تصحيح بيانات العميل وحذفه ---------- */
+function canDeleteLead() { return S.isSuper || isOwnerMe(); }
+
+// تصحيح ما سجّله المساعد: اختياري، والحفظ ما يرسل للعميل شيئاً ولا يسلّمه
+function openLeadEdit(l) {
+  var opt = function (val, list, empty) {
+    return '<option value="">' + empty + "</option>" + list.map(function (o) {
+      return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(o) + "</option>";
+    }).join("");
+  };
+  var f = function (id, label, val, extra) {
+    return '<div class="field"><label for="' + id + '">' + label + '</label><input id="' + id + '" class="input" value="' +
+      esc(val == null ? "" : val) + '"' + (extra || "") + "></div>";
+  };
+  $("#leadReq").innerHTML = '<h3>تصحيح بيانات العميل</h3>' +
+    '<p class="hint" style="margin-bottom:12px">عدّل اللي سجّله المساعد غلط فقط. الحفظ ما يرسل للعميل أي رسالة.</p>' +
+    f("leName", "الاسم", l.name) +
+    '<div class="grid2">' +
+      '<div class="field"><label for="leDeal">نوع الطلب</label><select id="leDeal" class="input">' + opt(l.deal_type, ["إيجار", "شراء", "عرض عقار"], "—") + "</select></div>" +
+      '<div class="field"><label for="leType">نوع العقار</label><select id="leType" class="input">' + opt(l.property_type, ["شقة", "فيلا", "دور", "أرض", "محل"], "—") + "</select></div>" +
+    "</div>" +
+    '<div class="grid2">' + f("leCity", "المدينة", l.city, ' list="cityList" autocomplete="off"') + f("leLoc", "الحي", l.location) + "</div>" + cityOptions() +
+    '<div class="grid2">' +
+      f("leBudget", "الميزانية بالريال", l.budget, ' inputmode="numeric" dir="ltr"') +
+      '<div class="field"><label for="lePer">فترة الميزانية</label><select id="lePer" class="input">' + opt(l.budget_period, ["سنوي", "شهري"], "—") + "</select></div>" +
+    "</div>" +
+    '<p class="hint" id="leBudgetHint"></p>' +
+    f("leRooms", "عدد الغرف", l.rooms, ' type="number" inputmode="numeric"') +
+    '<div class="btnrow"><button class="btn" id="leSave">احفظ التصحيح</button><button class="btn ghost" id="leCancel">إلغاء</button></div>' +
+    '<div id="leMsg"></div>';
+  var hint = function () {
+    var n = Number(digits(latinDigits($("#leBudget").value)));
+    $("#leBudgetHint").textContent = n ? money(n) + " ريال" : "";
+  };
+  $("#leBudget").oninput = hint; hint();
+  $("#leCancel").onclick = function () { openLead(l.id); };
+  $("#leSave").onclick = function () {
+    var b = this; b.disabled = true; note("#leMsg", "", "");
+    call({ action: "lead_update", id: l.id, fields: {
+      name: $("#leName").value, deal_type: $("#leDeal").value, property_type: $("#leType").value,
+      city: $("#leCity").value, location: $("#leLoc").value, budget: digits(latinDigits($("#leBudget").value)),
+      budget_period: $("#lePer").value, rooms: $("#leRooms").value,
+    } }).then(function (r) {
+      var i = S.leads.findIndex(function (x) { return x.id === l.id; });
+      if (i > -1 && r.lead) S.leads[i] = Object.assign({}, S.leads[i], r.lead);
+      renderLeads(); renderToday();
+      openLead(l.id);
+    }).catch(function (e) { note("#leMsg", e.message, "err"); b.disabled = false; });
+  };
+}
+
+// حذف نهائي بتأكيد واضح داخل البطاقة (حذف / إلغاء)
+function askLeadDelete(l) {
+  var host = document.querySelector(".lead-del");
+  host.innerHTML = '<div class="card confirm-del">' +
+    "<h3>هل أنت متأكد من حذف هذا العميل؟</h3>" +
+    '<p class="hint">يُحذف طلبه ومحادثته من مقصد نهائياً، وما يمكن استرجاعها. محادثته في واتساب نفسه ما تتأثر. ' +
+    "وإذا راسلكم مرة ثانية يبدأ كعميل جديد بلا بيانات سابقة.</p>" +
+    '<div class="btnrow"><button class="btn danger-solid" id="delYes">حذف</button>' +
+    '<button class="btn ghost" id="delNo">إلغاء</button></div><div id="delMsg"></div></div>';
+  try { host.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+  $("#delNo").onclick = function () { openLead(l.id); };
+  $("#delYes").onclick = function () {
+    var b = this; b.disabled = true;
+    call({ action: "lead_delete", id: l.id }).then(function () {
+      S.leads = S.leads.filter(function (x) { return x.id !== l.id; });
+      S.month = {};
+      renderLeads(); renderToday();
+      closeSheet();
+    }).catch(function (e) { note("#delMsg", e.message, "err"); b.disabled = false; });
+  };
+}
+
 /* ==========================================================================
    العقارات
    ========================================================================== */
+// المدن: نفس اسم الحي موجود في أكثر من مدينة (المنتزه في الرياض والطائف)، فالمدينة جزء من العقار
+var CITIES = ["الرياض", "جدة", "مكة المكرمة", "المدينة المنورة", "الدمام", "الخبر", "الظهران", "الطائف", "بريدة",
+  "عنيزة", "تبوك", "أبها", "خميس مشيط", "حائل", "الأحساء", "الجبيل", "نجران", "جازان", "ينبع", "القطيف"];
+function propCities() {
+  var seen = {};
+  S.props.forEach(function (p) { if (p.city) seen[p.city] = 1; });
+  return Object.keys(seen);
+}
+function cityOptions() {
+  var all = propCities();
+  CITIES.forEach(function (c) { if (all.indexOf(c) < 0) all.push(c); });
+  return '<datalist id="cityList">' + all.map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
+}
+// مدينة افتراضية للعقار الجديد: إذا كل عقارات المكتب في مدينة وحدة
+function defaultCity() { var c = propCities(); return c.length === 1 ? c[0] : ""; }
+
 function propMatches(p) {
+  if (S.stockCity && p.city !== S.stockCity) return false;
   if (S.stockFilter === "listable" && !p.listable) return false;
   if (S.stockFilter === "blocked" && !licenseBlocked(p)) return false;
   var q = S.stockQuery.trim();
   if (!q) return true;
-  return [p.title, p.district, p.property_type].join(" ").toLowerCase()
+  return [p.title, p.district, p.city, p.property_type].join(" ").toLowerCase()
     .indexOf(q.toLowerCase()) !== -1;
 }
 
 function renderStock() {
+  var cities = propCities();
+  var cf = $("#stockCity");
+  if (cf) {
+    if (cities.length > 1) {
+      if (cities.indexOf(S.stockCity) < 0) S.stockCity = "";
+      cf.innerHTML = '<option value="">كل المدن</option>' + cities.map(function (c) {
+        return '<option value="' + esc(c) + '"' + (c === S.stockCity ? " selected" : "") + ">" + esc(c) + "</option>";
+      }).join("");
+      cf.hidden = false;
+    } else { cf.hidden = true; S.stockCity = ""; }
+  }
   var list = S.props.filter(propMatches);
   var ok = S.props.filter(function (p) { return p.listable; }).length;
   $("#stockCount").textContent = ok + " من " + S.props.length + " قابل للعرض";
@@ -1298,7 +1406,8 @@ function renderStock() {
 
   var wrap = el("div", "rows");
   list.forEach(function (p) {
-    var sub = [p.district, p.rooms ? p.rooms + " غرف" : null, money(p.price) + " ريال"]
+    var sub = [[p.district, cities.length > 1 ? p.city : null].filter(Boolean).join("، "),
+      p.deal_type === "إيجار" ? "إيجار" : "بيع", p.rooms ? p.rooms + " غرف" : null, money(p.price) + " ريال"]
       .filter(Boolean).join(" · ");
     var tag = p.listable ? '<span class="tag ok">للعرض</span>'
       : p.state !== "available" ? '<span class="tag mute">' + esc(PSTATE[p.state] || p.state) + "</span>"
@@ -1332,16 +1441,19 @@ function openProp(id) {
       '<input id="pTitle" class="input" value="' + esc(v.title || "") + '" placeholder="شقة النرجس A12"></div>' +
     '<div class="grid2">' +
       '<div class="field"><label for="pDeal">نوع الطلب</label><select id="pDeal" class="input">' +
-        sel("deal", v.deal_type, ["إيجار", "شراء"]) + "</select></div>" +
+        // «بيع» قديمة = «شراء»؛ بدونها يتحول العقار لإيجار بالغلط عند الحفظ
+        sel("deal", v.deal_type === "بيع" ? "شراء" : v.deal_type, ["إيجار", "شراء"]) + "</select></div>" +
       '<div class="field"><label for="pType">نوع العقار</label><select id="pType" class="input">' +
         sel("type", v.property_type, ["شقة", "فيلا", "دور", "أرض", "محل"]) + "</select></div>" +
     "</div>" +
     '<div class="grid2">' +
+      '<div class="field"><label for="pCity">المدينة</label>' +
+        '<input id="pCity" class="input" list="cityList" autocomplete="off" value="' + esc(v.city || (p ? "" : defaultCity())) + '" placeholder="الرياض"></div>' +
       '<div class="field"><label for="pDistrict">الحي</label>' +
         '<input id="pDistrict" class="input" value="' + esc(v.district || "") + '" placeholder="النرجس"></div>' +
-      '<div class="field"><label for="pRooms">عدد الغرف</label>' +
-        '<input id="pRooms" class="input" type="number" inputmode="numeric" value="' + esc(v.rooms || "") + '"></div>' +
-    "</div>" +
+    "</div>" + cityOptions() +
+    '<div class="field"><label for="pRooms">عدد الغرف</label>' +
+      '<input id="pRooms" class="input" type="number" inputmode="numeric" value="' + esc(v.rooms || "") + '"></div>' +
     '<div class="grid2">' +
       '<div class="field"><label for="pPrice">السعر بالريال (الإيجار سنوي)</label>' +
         '<input id="pPrice" class="input" type="number" inputmode="numeric" value="' + esc(v.price || "") + '"></div>' +
@@ -1364,13 +1476,15 @@ function openProp(id) {
 
   if (p) $("#pMatches").onclick = function () { openPropMatches(p); };
   $("#pSave").onclick = function () {
-    var b = this; b.disabled = true; note("#pMsg", "", "");
+    var b = this;
+    if (!$("#pCity").value.trim()) { note("#pMsg", "اكتب المدينة — نفس اسم الحي موجود في أكثر من مدينة.", "err"); return; }
+    b.disabled = true; note("#pMsg", "", "");
     call({
       action: "property_save",
       property: {
         id: p ? p.id : undefined,
         title: $("#pTitle").value, deal_type: $("#pDeal").value,
-        property_type: $("#pType").value, district: $("#pDistrict").value,
+        property_type: $("#pType").value, district: $("#pDistrict").value, city: $("#pCity").value.trim(),
         price: $("#pPrice").value, rooms: $("#pRooms").value,
         state: $("#pState").value, ad_license_no: $("#pLic").value,
         ad_license_expiry: $("#pExp").value,
@@ -1387,19 +1501,26 @@ function openProp(id) {
 /* ==========================================================================
    المكاتب — مشغّل المنصة
    ========================================================================== */
-// المكتب يحتاج انتباه المدير: رخصة، طلب تعديل، أو واتساب غير مربوط
-function officeIssues(o) {
-  if (o.active === false) return [];
-  var f = falOf(o), out = [];
-  if (o.fal_request) out.push("طلب تعديل رخصة");
-  if (f.state === "pending") out.push("رخصة بانتظار التحقق");
-  else if (f.state === "rejected") out.push("رخصة مرفوضة");
-  else if (f.state === "expired") out.push("رخصة منتهية");
-  else if (falSoon(f)) out.push("رخصة تنتهي " + inDaysAr(f.days_left));
-  if (!o.wa_linked) out.push("بلا واتساب");
-  if (o.terms_ok === false) out.push("ما وافق على الشروط");
-  return out;
+// حالة المكتب كما يعيشها عميله: هل المساعد يرد ويعرض فعلاً؟
+// blockers = شي يوقف الخدمة أو ينتظر إجراء من المدير (هذي فقط «يحتاج إجراء») ·
+// notes = تذكير ما يوقف الخدمة (شروط ما انقبلت، فال قربت تنتهي، مزود انتقالي)
+function officeStatus(o) {
+  if (o.active === false) return { key: "off", label: "موقوف", cls: "mute", blockers: [], notes: [] };
+  var f = falOf(o), blockers = [], notes = [];
+  if (f.state === "pending") blockers.push("رخصة فال بانتظار تحققك — المساعد ما يرد على عملائه");
+  else if (f.state === "rejected") blockers.push("رخصة فال مرفوضة — المساعد ما يرد على عملائه");
+  else if (f.state === "expired") blockers.push("رخصة فال منتهية — ما تُعرض عقاراته");
+  if (!o.wa_linked) blockers.push("واتساب غير مربوط — ما توصله رسائل العملاء");
+  if (o.fal_request) blockers.push("طلب تعديل رخصة ينتظرك");
+  if (falSoon(f)) notes.push("فال تنتهي " + inDaysAr(f.days_left));
+  if (o.terms_ok === false) notes.push("صاحب المكتب ما وافق على الشروط بعد");
+  if (o.wa_provider === "ultramsg") notes.push("على مزوّد واتساب انتقالي");
+  return blockers.length
+    ? { key: "attn", label: "يحتاج إجراء", cls: "hot", blockers: blockers, notes: notes }
+    : { key: "on", label: "شغّال", cls: "ok", blockers: blockers, notes: notes };
 }
+// للنقطة في القائمة والفلتر: الأسباب اللي توقف الخدمة فقط
+function officeIssues(o) { return officeStatus(o).blockers; }
 
 function officeMatches(o) {
   var f = S.officeFilter;
@@ -1414,8 +1535,9 @@ function officeMatches(o) {
 function renderOffices() {
   if (!S.isSuper) return;
   var active = S.offices.filter(function (o) { return o.active !== false; }).length;
-  $("#officesCount").textContent = S.offices.length + " مكتب · " + active + " شغّال";
   var attn = S.offices.filter(function (o) { return officeIssues(o).length; }).length;
+  $("#officesCount").textContent = S.offices.length + " مكتب · " + (active - attn) + " شغّال" +
+    (attn ? " · " + attn + " يحتاج إجراء" : "");
   $("#navOfficesDot").hidden = attn === 0;
 
   var host = $("#officesList");
@@ -1424,17 +1546,18 @@ function renderOffices() {
   if (!list.length) { host.innerHTML = state(ICON.home, "ما فيه نتائج", "غيّر البحث أو الفلتر."); return; }
   host.innerHTML = "";
   list.forEach(function (o) {
-    var issues = officeIssues(o);
-    var sub = (o.wa_linked ? '<i class="stt ok"></i>واتساب مربوط' : '<i class="stt off"></i>بلا واتساب') +
-      " · " + (o.leads || 0) + " عميل · " + (o.props || 0) + " عقار";
-    var tags = (o.active === false ? '<span class="tag mute">موقوف</span>' : "") + falTag(o.fal) +
-      (o.fal_request ? '<span class="tag hot">طلب تعديل رخصة</span>' : "") +
+    var st = officeStatus(o);
+    var sub = (o.leads || 0) + " عميل · " + (o.props || 0) + " عقار" + (o.wa_number ? ' · <span class="ltr num">' + esc(fmtPhone(o.wa_number)) + "</span>" : "");
+    var tags = '<span class="tag ' + st.cls + '">' + st.label + "</span>" +
       (o.voice ? '<span class="tag brand">الصوتيات</span>' : "");
-    var row = el("div", "row static office-row" + (issues.length ? " needs" : ""),
+    // السبب مكتوب بدل «يحتاج انتباه» العامة
+    var why = st.blockers.map(function (t) { return '<span class="s why hot">' + esc(t) + "</span>"; }).join("") +
+      (st.notes.length ? '<span class="s why">' + esc(st.notes.join(" · ")) + "</span>" : "");
+    var row = el("div", "row static office-row" + (st.key === "attn" ? " needs" : ""),
       '<div class="main"><span class="t">' + esc(o.name) + "</span>" +
-      '<span class="s">' + esc(o.code) + " · فال " + '<span class="ltr num">' + esc(o.license_no || "—") + "</span></span>" +
-      '<span class="s fal-line">' + tags + "</span>" +
-      '<span class="s">' + sub + "</span></div>");
+      '<span class="s fal-line">' + tags + "</span>" + why +
+      '<span class="s">' + sub + "</span>" +
+      '<span class="s mute-s">' + esc(o.code) + " · فال " + '<span class="ltr num">' + esc(o.license_no || "—") + "</span></span></div>");
     var end = el("div", "end");
     var bOpen = el("button", "btn sm", "ادخل");
     var bEdit = el("button", "btn ghost sm", "تعديل");
@@ -1568,7 +1691,7 @@ function saveAi(b) {
 // أسماء الحقول في السجل بالعربي
 var FIELD_AR = {
   name: "الاسم", code: "الرمز", license_no: "رقم الرخصة", wa_provider: "مزوّد واتساب", wa_instance: "معرّف واتساب",
-  wa_token: "توكن واتساب", wa_number: "رقم واتساب", telegram_chat_id: "تيليجرام", msg_quota: "حد الرسائل",
+  wa_token: "توكن واتساب", wa_number: "رقم واتساب", telegram_chat_id: "تيليجرام", msg_quota: "حد الحماية اليومي",
   active: "التفعيل", voice: "الصوتيات", from_signup: "من طلب انضمام", phone: "الجوال", role: "الدور",
   title: "اسم العقار", price: "السعر", district: "الحي", rooms: "الغرف", state: "الحالة", deal_type: "نوع الطلب",
   property_type: "نوع العقار", ad_license_no: "ترخيص الإعلان", ad_license_expiry: "انتهاء الترخيص",
@@ -1697,7 +1820,7 @@ function switchOffice(o, btn) {
 }
 
 function openOffice(o, prefill) {
-  var v = o || Object.assign({ msg_quota: 15, wa_provider: "cloud" }, prefill || {});
+  var v = o || Object.assign({ msg_quota: 40, wa_provider: "cloud" }, prefill || {});
   openSheet(o ? "تعديل: " + o.name : "مكتب جديد",
     '<div class="field"><label for="oName">اسم المكتب</label>' +
       '<input id="oName" class="input" value="' + esc(v.name || "") + '" placeholder="مكتب الأفق العقاري"></div>' +
@@ -1709,7 +1832,10 @@ function openOffice(o, prefill) {
     "</div>" +
     '<div class="field"><label for="oProv">مزوّد واتساب</label><select id="oProv" class="input">' +
       '<option value="cloud"' + (v.wa_provider === "cloud" ? " selected" : "") + ">واتساب الرسمي من ميتا</option>" +
-      '<option value="ultramsg"' + (v.wa_provider !== "cloud" ? " selected" : "") + ">UltraMsg — مرحلة انتقالية</option>" +
+      // المزوّد الانتقالي مخفي للمكاتب الجديدة (الإطلاق على واتساب الرسمي فقط)، ويبقى لمكتب مربوط عليه حالياً
+      // حتى لا يتحول بالغلط عند حفظ أي تعديل
+      (o && v.wa_provider === "ultramsg"
+        ? '<option value="ultramsg" selected>UltraMsg — انتقالي (انقله لواتساب الرسمي)</option>' : "") +
     "</select></div>" +
     '<div class="grid2">' +
       '<div class="field"><label for="oInst" id="oInstLbl"></label>' +
@@ -1722,8 +1848,9 @@ function openOffice(o, prefill) {
       '<div class="field"><label for="oNum">رقم واتساب المكتب</label>' +
         '<input id="oNum" class="input ltr" type="tel" inputmode="tel" value="' + esc(v.wa_number ? fmtPhone(v.wa_number) : "") + '">' +
         '<p class="hint" id="oNumHint"></p></div>' +
-      '<div class="field"><label for="oQuota">حد الرسائل</label>' +
-        '<input id="oQuota" class="input" type="number" inputmode="numeric" value="' + esc(v.msg_quota || 15) + '"></div>' +
+      '<div class="field"><label for="oQuota">حد الحماية اليومي</label>' +
+        '<input id="oQuota" class="input" type="number" inputmode="numeric" value="' + esc(v.msg_quota || 40) + '">' +
+        '<p class="hint">أقصى ردود آلية لنفس العميل خلال ٢٤ ساعة (أقله ٤٠). مو معيار التسليم: المساعد يسلّم لما يكتمل الطلب أو يحتاج العميل موظف.</p></div>' +
     "</div>" +
     '<div class="field"><label for="oTg">معرّف محادثة تيليجرام</label>' +
       '<input id="oTg" class="input ltr" value="' + esc(v.telegram_chat_id || "") + '" placeholder="-100..."></div>' +
@@ -2442,7 +2569,7 @@ function renderSettings() {
     ["رقم الواتساب", o.wa_number || "—"],
     // تفاصيل تقنية: لمشغّل المنصة فقط
     S.isSuper ? ["مزود الواتساب", o.wa_provider === "cloud" ? "واتساب الرسمي" : "UltraMsg"] : null,
-    S.isSuper ? ["حد الرسائل الآلية", o.msg_quota] : null,
+    S.isSuper ? ["حد الحماية اليومي لكل عميل", o.msg_quota] : null,
     S.isSuper ? ["مهلة تجميع الرسائل", (o.debounce_seconds || 7) + " ثوانٍ"] : null,
   ].filter(Boolean).map(function (p) {
     return "<div><dt>" + esc(p[0]) + '</dt><dd class="num">' + (p[2] || esc(p[1])) + "</dd></div>";
@@ -2614,6 +2741,7 @@ function bind() {
 
   $("#leadSearch").oninput = function () { S.leadQuery = this.value; renderLeads(); };
   $("#stockSearch").oninput = function () { S.stockQuery = this.value; renderStock(); };
+  $("#stockCity").onchange = function () { S.stockCity = this.value; renderStock(); };
 
   var lc = document.querySelectorAll("#leadChips .chip");
   for (var a = 0; a < lc.length; a++) {
@@ -2732,8 +2860,9 @@ var PICON = {
 /* ---------- إضافة عقار بخطوات ---------- */
 var PROP_DRAFT = "maqsad_prop_draft";
 function openPropWizard(done) {
-  var d = lsGet(PROP_DRAFT) || { deal_type: "", property_type: "", district: "", rooms: "", title: "", price: "",
+  var d = lsGet(PROP_DRAFT) || { deal_type: "", property_type: "", city: defaultCity(), district: "", rooms: "", title: "", price: "",
     ad_license_no: "", ad_license_expiry: "", step: 0 };
+  if (d.city == null) d.city = defaultCity();   // مسودة محفوظة قبل حقل المدينة
   var N = 5;
   openSheet("عقار جديد", '<div id="wz"></div>');
   var save = function () { lsSet(PROP_DRAFT, d); };
@@ -2765,7 +2894,10 @@ function openPropWizard(done) {
         save(); $("#wzNext").disabled = !(d.deal_type && d.property_type);
       });
     } else if (i === 1) {
-      h.innerHTML = stepHead(1, N, "وين موقعه؟", "الحي اللي يبحث فيه العميل — اكتبه مثل ما يكتبه الناس.") +
+      h.innerHTML = stepHead(1, N, "وين موقعه؟", "المدينة والحي — اكتبه مثل ما يكتبه الناس.") +
+        '<div class="field"><label for="wzCity">المدينة</label>' +
+          '<input id="wzCity" class="input" list="cityList" autocomplete="off" placeholder="الرياض" value="' + esc(d.city) + '">' +
+          '<p class="hint">مطلوبة: نفس اسم الحي موجود في أكثر من مدينة.</p></div>' + cityOptions() +
         '<div class="field"><label for="wzDistrict">الحي</label>' +
           '<input id="wzDistrict" class="input" autocomplete="off" placeholder="النرجس" value="' + esc(d.district) + '"></div>' +
         (isLand() ? "" : '<div class="field"><label for="wzRooms">عدد الغرف <span class="opt">(اختياري)</span></label>' +
@@ -2773,12 +2905,14 @@ function openPropWizard(done) {
         '<div class="field"><label for="wzTitle">اسم مختصر تعرفه أنت <span class="opt">(اختياري)</span></label>' +
           '<input id="wzTitle" class="input" placeholder="' + esc(autoTitle() || "شقة النرجس A12") + '" value="' + esc(d.title) + '">' +
           '<p class="hint">ما يشوفه العميل — بس عشان تميّز العقار في قائمتك.</p></div>' +
-        nav(true, "التالي", d.district.trim().length > 1);
-      $("#wzDistrict").oninput = function () { d.district = this.value; save(); $("#wzNext").disabled = d.district.trim().length < 2;
+        nav(true, "التالي", d.district.trim().length > 1 && d.city.trim().length > 1);
+      var locOk = function () { $("#wzNext").disabled = d.district.trim().length < 2 || d.city.trim().length < 2; };
+      $("#wzCity").oninput = function () { d.city = this.value; save(); locOk(); };
+      $("#wzDistrict").oninput = function () { d.district = this.value; save(); locOk();
         $("#wzTitle").placeholder = autoTitle() || "شقة النرجس A12"; };
       if ($("#wzRooms")) $("#wzRooms").oninput = function () { d.rooms = this.value; save(); };
       $("#wzTitle").oninput = function () { d.title = this.value; save(); };
-      $("#wzDistrict").focus();
+      (d.city ? $("#wzDistrict") : $("#wzCity")).focus();
     } else if (i === 2) {
       var rent = d.deal_type === "إيجار";
       h.innerHTML = stepHead(2, N, "كم السعر؟", rent ? "الإيجار السنوي بالريال." : "سعر البيع بالريال.") +
@@ -2818,7 +2952,7 @@ function openPropWizard(done) {
       h.innerHTML = stepHead(4, N, "راجع قبل الحفظ") +
         '<div class="card"><dl class="dl">' +
           row("العرض", d.deal_type === "إيجار" ? "للإيجار" : "للبيع", 0) + row("العقار", d.property_type, 0) +
-          row("الحي", d.district, 1) + (isLand() ? "" : row("الغرف", d.rooms, 1)) +
+          row("المدينة", d.city, 1) + row("الحي", d.district, 1) + (isLand() ? "" : row("الغرف", d.rooms, 1)) +
           row("الاسم", d.title || autoTitle(), 1) +
           row("السعر", n ? money(n) + " ريال" + (d.deal_type === "إيجار" ? " سنوياً" : "") : "", 2) +
           row("ترخيص الإعلان", d.ad_license_no ? d.ad_license_no + (d.ad_license_expiry ? " — ينتهي " + gDate(d.ad_license_expiry) : "") : "بدون — ما يُعرض", 3) +
@@ -2835,7 +2969,7 @@ function openPropWizard(done) {
     var saved = null;
     call({ action: "property_save", property: {
       title: (d.title || autoTitle()).trim(), deal_type: d.deal_type, property_type: d.property_type,
-      district: d.district.trim(), rooms: isLand() ? "" : d.rooms, price: digits(latinDigits(d.price)), state: "available",
+      city: d.city.trim(), district: d.district.trim(), rooms: isLand() ? "" : d.rooms, price: digits(latinDigits(d.price)), state: "available",
       ad_license_no: digits(latinDigits(d.ad_license_no)), ad_license_expiry: d.ad_license_expiry,
     } }).then(function (sr) { saved = sr; return call({ action: "properties" }); }).then(function (r) {
       lsSet(PROP_DRAFT, null);
