@@ -3,7 +3,7 @@
 ## ١) دوال الخادم (Supabase Edge Functions)
 
 - كل مجلد داخل `supabase/functions/` دالة مستقلة، وملفها الرئيسي `index.ts`.
-- الدوال `api` و`wa-webhook` و`fal-check` تحتاج معها `notify.ts` (نسخة من `_shared/notify.ts`).
+- الدوال `api` و`wa-webhook` و`fal-check` و`stock-check` تحتاج معها `notify.ts` (نسخة من `_shared/notify.ts`).
 - كل الدوال تُنشر مع `verify_jwt = false` (الحماية داخل الكود: رابط سري أو توقيع أو جلسة).
 - بعد النشر: `get_edge_function` ثم مطابقة كل ملف بالمستودع حرفاً بحرف (آخر مطابقة كاملة: wa-webhook نسخة ١٧ = v5.4، ٢ أكتوبر ٢٠٢٦).
 - بسطر الأوامر:
@@ -134,7 +134,7 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
 
 دورات المياه، المساحة، العمر، الفرش، المرافق، الواجهة والشارع، وشروط الإيجار والبيع. كلها اختيارية.
 ترتيب النشر (لا تعكسه: `api` الجديدة تكتب عمود `details`، والـview لازم يرجّعه قبل البوت):
-1. `13_property_details.sql` باسم `property_details` (إضافات فقط: عمود `properties.details` jsonb بقيمة افتراضية `{}` + إعادة تعريف `v_listable_properties` بالعمود في آخره، شرط الترخيص ما تغيّر). بعدها `login_start` حي = 200.
+1. `14_property_details.sql` باسم `property_details` (إضافات فقط: عمود `properties.details` jsonb بقيمة افتراضية `{}` + إعادة تعريف `v_listable_properties` بالعمود في آخره، شرط الترخيص ما تغيّر). بعدها `login_start` حي = 200.
 2. `api` ثم `wa-webhook` (مع `notify.ts` كالعادة). `wa-webhook` قبل الـ migration آمن: يرجع للأعمدة القديمة بلا تفاصيل. `get_edge_function` ومطابقة حرفية.
 3. الواجهة: `mkpatch.py` ثم `select * from public.build_app();`. بعدها `login_start` حي = 200.
 

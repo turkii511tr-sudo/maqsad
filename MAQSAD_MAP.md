@@ -1,6 +1,8 @@
 # خريطة مشروع مقصد — MAQSAD_MAP
 
-آخر تحقق: 79ccaeb (الوسيط المسؤول والفرص الضائعة منشورة: migration 12 · api v18 · الواجهة) — 2026-10-02 · تفاصيل العقار (migration 13) في المستودع فقط، غير منشورة
+آخر تحقق: 79ccaeb (الوسيط المسؤول والفرص الضائعة منشورة: migration 12 · api v18 · الواجهة) — 2026-10-02
+منشور (٣ أكتوبر ٢٠٢٦): تأكيد توفّر العقارات — migration 13 · api v19 (`prop_mark`) · `stock-check` v1 · الواجهة (md5 1af051bf2ef857240fe3be87df736d60) · cron `maqsad-stock-check` ٦:٣٠ UTC
+تفاصيل العقار الاختيارية: migration 14 مطبّقة على الإنتاج (٣ أكتوبر ٢٠٢٦)؛ الكود (api · wa-webhook · الواجهة) في المستودع وغير منشور بعد
 
 خريطة ملاحة لـ Claude Code: من أين تبدأ، وما الذي تفتحه، وما الذي لا تحتاج أن تفتحه.
 المراجع بالاسم (ملف + دالة/جدول/action)، بلا أرقام أسطر. الكود الفعلي هو الحكم دائماً.
@@ -34,6 +36,7 @@
 | المكتب / حالة المكتب / يحتاج إجراء | B4 إدارة المكاتب | جدول `offices` · `api` actions `office_save`, `offices_list` (`wa_linked`) · `app.js` (`officeStatus`, `renderOffices`, `openOffice`) |
 | تفاصيل العقار (دورات المياه، المساحة، العمر، المرافق…) | B5، B1 | عمود `properties.details` (jsonb) · `api` (`PROP_DETAIL_SPEC`, `cleanDetails`) · `app.js` (`PD_GROUPS`, `pdHtml`, `pdWire`, `pdClean`) · `wa` (`DETAIL_SPEC`, `detailPhrases`, `detailsText`, `propDetailsOf`) |
 | العقار / المخزون | B5 العقارات والمطابقة | جدول `properties` · `api` actions `properties`, `property_save` · `app.js` (`renderStock`, `openProp`, `openPropWizard`) |
+| تم تأجيره / تم بيعه / ما زال متاح / بانتظار التأكيد / غير مؤكَّد | B5 | `api` action `prop_mark` · `properties.confirmed_at`, `remind_count`, `remind_sent_at` · حالة `unconfirmed` · `stock-check/index.ts` · `app.js` (`propActions`, `markProp`, `needsConfirm`) |
 | الإعلان / ترخيص الإعلان | B5 | `properties.ad_license_no`, `ad_license_expiry` · view `v_listable_properties` · `api` (`decorate`) |
 | المطابقة / عقارات مناسبة | B5 | SQL `match_properties`, `match_customers`, `annual_budget` · `api` action `prop_matches` |
 | رخصة فال | B6 رخصة فال | `offices.fal_*` · `api` (`falInfo`, `fal_verify`, `fal_reject`…) · `wa-webhook` (`falState`) · `fal-check/index.ts` |
@@ -106,13 +109,14 @@
 
 ### B5 — العقارات والمطابقة
 - **الوظيفة**: مخزون المكتب، إضافة عقار بخطوات، شرط ترخيص الإعلان، مطابقة العملاء بالعقارات.
-- **نقطة الدخول**: `app.js` → `renderStock`, `openProp`, `openPropWizard`, `openPropMatches` (الشاشة `s-stock`) ← `api` actions `properties`, `property_save`, `prop_matches`؛ ومن B1 → `processTurn` ← `match_properties`.
-- **الدوال**: `api`: `decorate` (يحسب `listable`/`block_reason`)، `property_save` (المدينة إلزامية للجديد، «بيع» ← «شراء») · `app.js`: `propMatches`, `propCities`, `defaultCity`, `cityOptions`, `matchWaText`, `openMatchesPrompt`.
-- **التفاصيل الاختيارية** (migration 13، `properties.details`): كلها اختيارية وغير المعبّأ = غير معروف (يحفظ فقط `true` للمرافق). المفاتيح تنطبق حسب نوع العقار ونوع الطلب (إيجار/شراء). الخطوة الخامسة في `openPropWizard` وقسم في `openProp` (أقسام تنطوي + عدّادات وأزرار اختيار + «انسخ تفاصيل آخر عقار مثله»). `api:cleanDetails` يرمي أي مفتاح أو قيمة أو حقل لا ينطبق، والنسخة القديمة من التطبيق (بلا `details`) ما تمسح المحفوظ. القائمة مكررة عمداً في `api` و`app.js` و`wa` (البوت بلا «مرهون» و«قابل للتفاوض» — يبقون مع الوسيط) واختبار `api.test.mjs` يقارن المفاتيح الثلاثة. الـview `v_listable_properties` يرجع `details` في آخره.
-- **الجداول / SQL**: `properties` · view `v_listable_properties` · `match_properties_v2` (فترة الميزانية + المدينة + «بيع»=«شراء» + تطبيع الحي `ar_norm`)، `match_properties` (قديمة، للنسخة المنشورة)، `match_customers`, `annual_budget`.
+- **نقطة الدخول**: `app.js` → `renderStock`, `openProp`, `openPropWizard`, `openPropMatches` (الشاشة `s-stock`) ← `api` actions `properties`, `property_save`, `prop_matches`, `prop_mark`؛ و`stock-check/index.ts` → `Deno.serve` (يومياً عبر cron)؛ ومن B1 → `processTurn` ← `match_properties`.
+- **الدوال**: `api`: `decorate` (يحسب `listable`/`block_reason`)، `property_save` (المدينة إلزامية للجديد، «بيع» ← «شراء») · `app.js`: `propMatches`, `propCities`, `defaultCity`, `cityOptions`, `matchWaText`, `openMatchesPrompt`, `propActions`, `markProp`, `needsConfirm` · `stock-check`: `reminderText`, `pausedText`, `ageDays`.
+- **تأكيد التوفّر**: زر «تم تأجيره/تم بيعه» و«ما زال متاح» تحت كل عقار (`prop_mark`). المتاح ٧ أيام بلا تأكيد ← تذكير للمكتب على تيليجرام/إشعارات الجوال (`alertOffice`) والرد من التطبيق؛ تذكير أخير بعد ٦ أيام؛ عند ١٤ يوماً (وبعد تذكير وصل فعلاً) ← حالة `unconfirmed` فيختفي من البوت ويرجعه «ما زال متاح». حفظ العقار من النموذج = تأكيد. مكتب بلا قناة تنبيه لا يُوقف له شي. ليس عبر واتساب (قوالب ميتا غير لازمة).
+- **التفاصيل الاختيارية** (migration 14، `properties.details`): كلها اختيارية وغير المعبّأ = غير معروف (يحفظ فقط `true` للمرافق). المفاتيح تنطبق حسب نوع العقار ونوع الطلب (إيجار/شراء). الخطوة الخامسة في `openPropWizard` وقسم في `openProp` (أقسام تنطوي + عدّادات وأزرار اختيار + «انسخ تفاصيل آخر عقار مثله»). `api:cleanDetails` يرمي أي مفتاح أو قيمة أو حقل لا ينطبق، والنسخة القديمة من التطبيق (بلا `details`) ما تمسح المحفوظ. القائمة مكررة عمداً في `api` و`app.js` و`wa` (البوت بلا «مرهون» و«قابل للتفاوض» — يبقون مع الوسيط) واختبار `api.test.mjs` يقارن المفاتيح الثلاثة. الـview `v_listable_properties` يرجع `details` في آخره.
+- **الجداول / SQL**: `properties` · view `v_listable_properties` · `match_properties_v2` (فترة الميزانية + المدينة + «بيع»=«شراء» + تطبيع الحي `ar_norm`)، `match_properties` (قديمة، للنسخة المنشورة)، `match_customers`, `annual_budget` · أعمدة `confirmed_at`, `remind_count`, `remind_sent_at` · cron `maqsad-stock-check`.
 - **يعتمد على**: B6 (مكتب بلا فال سارية لا تُعرض عقاراته).
-- **الاختبار**: `wa.test.mjs`, `wa_sales.test.mjs` (المطابقة في المحادثة، وتفاصيل العقار في الردود) · `node app/tests/v14.test.js`, `v16.test.js`, `v19.test.js` (تفاصيل العقار) · `api.test.mjs` · SQL محلياً على Postgres (انظر `docs/DEPLOY.md`).
-- **النشر**: SQL ← `supabase/db/migrations/` + تحديث `02_functions_jobs.sql`؛ الواجهة ← B13.
+- **الاختبار**: `wa.test.mjs`, `wa_sales.test.mjs` (المطابقة في المحادثة، وتفاصيل العقار في الردود) · `stock.test.mjs` (التذكير والإيقاف) · `node app/tests/v14.test.js`, `v16.test.js`, `v18.test.js`, `v19.test.js` (تفاصيل العقار) · `api.test.mjs` · SQL محلياً على Postgres (انظر `docs/DEPLOY.md`).
+- **النشر**: SQL ← `supabase/db/migrations/` + تحديث `02_functions_jobs.sql`؛ الواجهة ← B13؛ `stock-check` مع `notify.ts` (بعد migration 13؛ الـcron يُفعَّل بعد نشرها).
 - **الخطورة**: متوسطة — خطأ في الـ view يعرض إعلاناً بلا ترخيص (مخالفة نظامية).
 
 ### B6 — رخصة فال
@@ -200,6 +204,7 @@
 8. **كل طلب من التطبيق**: `app.js:call` → `api:handle` → `api:session` → `sessions`/`staff`/`offices` → `switch (action)`.
 9. **اعتماد فال**: `app.js:falPanel` → `api` (`fal_verify`) → `offices.fal_*` + `fal_checks` + `events` ؛ الرفض `fal_reject`.
 10. **تذكير فال اليومي**: cron `maqsad-fal-check` → SQL `call_edge('fal-check')` → `fal-check:Deno.serve` → `stageOf` → `offices.fal_reminded` + `events` → `notify.ts:alertOffice`.
+11ب. **تأكيد توفّر العقار اليومي**: cron `maqsad-stock-check` → SQL `call_edge('stock-check')` → `stock-check:Deno.serve` → `properties` (`confirmed_at`, `remind_count`) → `notify.ts:alertOffice` + `events` (`stock_reminder`, `stock_paused`) · ردّ المكتب: `app.js:markProp` → `api` (`prop_mark`).
 11. **حفظ عقار**: `app.js:openPropWizard` (المدينة إلزامية) → `api` (`property_save`) → `properties` → SQL `match_customers` → `app.js:openMatchesPrompt`.
 16. **تصحيح/حذف عميل**: `app.js:openLeadEdit` → `api` (`lead_update`) → `customers` · `app.js:askLeadDelete` → `api` (`lead_delete`) → حذف `customers` (و`messages` بالـ cascade) → `privacy_requests` + `events`.
 12. **انضمام مكتب**: `site.js` (`#joinForm`) أو `app.js:openSignup` → `join:Deno.serve` → مخزن `fal-proofs` + `signup_requests` → `join:tell` (تيليجرام المشغّل) → `api` (`signup_list`/`signup_update`).
@@ -224,11 +229,11 @@
 
 ## 6. SHARED DEPENDENCIES
 
-- **`supabase/functions/_shared/notify.ts`** — الأصل. ⚠️ نسخ يجب أن تبقى مطابقة حرفياً: `api/notify.ts`, `wa-webhook/notify.ts`, `fal-check/notify.ts`. أي تعديل: عدّل الأصل، انسخه للثلاث، انشر الثلاث، وقارن md5.
+- **`supabase/functions/_shared/notify.ts`** — الأصل. ⚠️ نسخ يجب أن تبقى مطابقة حرفياً: `api/notify.ts`, `wa-webhook/notify.ts`, `fal-check/notify.ts`, `stock-check/notify.ts`. أي تعديل: عدّل الأصل، انسخه للأربع، انشر الأربع، وقارن md5.
 - **جدول `app_secrets`** — كل الدوال (`secrets()` مكررة داخل كل دالة، ليست ملفاً مشتركاً). الأسماء في `docs/SECRETS.md`.
-- **`WEBHOOK_SECRET`** — يحمي روابط `wa` (UltraMsg)، `tg`، `backup`، `fal-check`، `monthly-report`، ويُستخدم ملحاً في `sha()` لتشفير الجلسات والرموز في `api` و`wa`.
+- **`WEBHOOK_SECRET`** — يحمي روابط `wa` (UltraMsg)، `tg`، `backup`، `fal-check`، `stock-check`، `monthly-report`، ويُستخدم ملحاً في `sha()` لتشفير الجلسات والرموز في `api` و`wa`.
 - **مكررة بين الدوال (نسخ منفصلة غير مشتركة)**: `sendWhatsApp` (`api`, `wa`)، `bump` (`api`, `wa`)، `sha`، `riyadhToday`، `operatorChat` (`backup`, `contact`, `join`, `fal-check`, `monthly-report`)، `saudiMobile`/`hashIp`/`toLatin` (`join`, `contact`). تعديل منطق أحدها قد يلزم تعديل نظيره.
-- **SQL `call_edge`** — تستدعيه مهام cron لتشغيل `backup`, `fal-check`, `monthly-report`.
+- **SQL `call_edge`** — تستدعيه مهام cron لتشغيل `backup`, `fal-check`, `stock-check`, `monthly-report`.
 - **cron `maqsad-warm`** — يدفئ `api` و`wa-webhook` كل ٤ دقائق.
 - **`app.js:call`** — كل نداءات التطبيق للخادم تمر منه (الثابت `API`)، والاستثناء `JOIN_API`.
 - **`supabase/tests/harness.mjs`** — قاعدة وهمية و`fetch` وهمي لكل اختبارات الخادم (`makeDb`, `makeFetch`, `loadFunction`).

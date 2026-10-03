@@ -475,7 +475,7 @@ function sar(n: number) {
 }
 
 async function officeInventory(office: any) {
-  // details من migration 13؛ إذا ما انشرت بعد نرجع للأعمدة القديمة (المخزون يبقى يشتغل بلا تفاصيل)
+  // details من migration 14؛ إذا ما انشرت بعد نرجع للأعمدة القديمة (المخزون يبقى يشتغل بلا تفاصيل)
   let { data, error } = await db.from("v_listable_properties")
     .select("city,district,deal_type,property_type,price,rooms,details").eq("office_id", office.id).limit(300);
   if (error) {

@@ -118,7 +118,12 @@ var OUTCOME = {               // [الزر في بطاقة العميل، الش
   deal:      ["تمت الصفقة", "صفقة", "ok"],
   lost:      ["مو جاد", "مو جاد", "mute"],
 };
-var PSTATE = { available: "متاح", reserved: "محجوز", rented: "مؤجّر", sold: "مباع", closed: "مغلق" };
+var PSTATE = { available: "متاح", reserved: "محجوز", rented: "مؤجّر", sold: "مباع", closed: "مغلق", unconfirmed: "غير مؤكَّد" };
+// عقار ينتظر تأكيد توفّره: أوقفه البوت (غير مؤكَّد) أو متاح مرّ عليه ٧ أيام بلا تأكيد (يوصل صاحب المكتب تذكير)
+function needsConfirm(p) {
+  if (p.state === "unconfirmed") return true;
+  return p.state === "available" && !!p.confirmed_at && (Date.now() - new Date(p.confirmed_at).getTime()) >= 7 * 86400000;
+}
 
 function handoffOf(l) {
   return l.handoff_reason || (l.status === "qualified" && l.mode === "manual" ? "qualified" : null);
@@ -980,6 +985,19 @@ function renderToday() {
     }
   });
 
+  // عقارات تنتظر تأكيد توفّرها (تذكير أسبوعي، وبعد أسبوعين يوقفها البوت)
+  var unconf = S.props.filter(needsConfirm);
+  if (unconf.length) {
+    var paused = unconf.filter(function (p) { return p.state === "unconfirmed"; }).length;
+    items.push({
+      kind: "warn", icon: ICON.home,
+      title: unconf.length + " عقار بانتظار تأكيد توفّره",
+      body: paused ? paused + " منها أوقفها البوت حتى تؤكدها" : "هل ما زالت متاحة؟",
+      why: "اضغط «ما زال متاح» أو «تم تأجيره» لكل عقار",
+      go: function () { S.stockFilter = "confirm"; syncChips("#stockChips", "confirm"); renderStock(); show("s-stock"); },
+    });
+  }
+
   // المحجوب بسبب العقار نفسه (ترخيص إعلانه): حجب رخصة فال للمكتب كله له بطاقته فوق
   var blocked = S.props.filter(licenseBlocked).filter(function (p) { return !/فال/.test(p.block_reason || ""); });
   if (blocked.length) {
@@ -1452,10 +1470,38 @@ function propMatches(p) {
   if (S.stockCity && p.city !== S.stockCity) return false;
   if (S.stockFilter === "listable" && !p.listable) return false;
   if (S.stockFilter === "blocked" && !licenseBlocked(p)) return false;
+  if (S.stockFilter === "confirm" && !needsConfirm(p)) return false;
   var q = S.stockQuery.trim();
   if (!q) return true;
   return [p.title, p.district, p.city, p.property_type].join(" ").toLowerCase()
     .indexOf(q.toLowerCase()) !== -1;
+}
+
+// أزرار الضغطة الواحدة تحت كل عقار: تأجير/بيع يخفيه من البوت فوراً، ويمكن إرجاعه بزر «إعادة للمتاح»
+function propActions(p) {
+  var box = el("div", "pact");
+  var add = function (label, cls, to) {
+    var b = el("button", "btn sm " + cls, esc(label));
+    b.type = "button";
+    b.onclick = function () { markProp(p, to, b); };
+    box.appendChild(b);
+  };
+  if (p.state === "available" || p.state === "reserved" || p.state === "unconfirmed") {
+    if (needsConfirm(p)) add("ما زال متاح", "", "confirm");
+    add(p.deal_type === "إيجار" ? "تم تأجيره" : "تم بيعه", "ghost", p.deal_type === "إيجار" ? "rented" : "sold");
+  } else if (p.state === "rented" || p.state === "sold") {
+    add("إعادة للمتاح", "ghost", "available");
+  }
+  return box;
+}
+function markProp(p, to, btn) {
+  btn.disabled = true;
+  call({ action: "prop_mark", id: p.id, to: to }).then(function (r) {
+    var upd = {};
+    (r.properties || []).forEach(function (x) { upd[x.id] = x; });
+    S.props = S.props.map(function (x) { return upd[x.id] || x; });
+    renderStock(); renderToday();
+  }).catch(function (e) { btn.disabled = false; alert(e.message); });
 }
 
 function renderStock() {
@@ -1472,7 +1518,9 @@ function renderStock() {
   }
   var list = S.props.filter(propMatches);
   var ok = S.props.filter(function (p) { return p.listable; }).length;
-  $("#stockCount").textContent = ok + " من " + S.props.length + " قابل للعرض";
+  var waitN = S.props.filter(needsConfirm).length;
+  $("#stockCount").textContent = ok + " من " + S.props.length + " قابل للعرض" +
+    (waitN ? " · " + waitN + " بانتظار التأكيد" : "");
 
   if (!S.props.length) {
     $("#stockWrap").innerHTML = state(ICON.home, "المخزون فارغ",
@@ -1490,6 +1538,7 @@ function renderStock() {
       p.deal_type === "إيجار" ? "إيجار" : "بيع", p.rooms ? p.rooms + " غرف" : null].concat(pdBrief(p), [money(p.price) + " ريال"])
       .filter(Boolean).join(" · ");
     var tag = p.listable ? '<span class="tag ok">للعرض</span>'
+      : p.state === "unconfirmed" ? '<span class="tag warn">' + PSTATE.unconfirmed + "</span>"
       : p.state !== "available" ? '<span class="tag mute">' + esc(PSTATE[p.state] || p.state) + "</span>"
       : '<span class="tag danger">محجوب</span>';
     var why = p.listable || p.state !== "available" ? "" : " — " + esc(p.block_reason || "");
@@ -1498,7 +1547,10 @@ function renderStock() {
       '<span class="s num">' + esc(sub) + why + "</span></div>" +
       '<div class="end">' + tag + svg(ICON.chev, 'class="chev"') + "</div>");
     row.onclick = function () { openProp(p.id); };
-    wrap.appendChild(row);
+    var box = el("div", "prow");
+    box.appendChild(row);
+    box.appendChild(propActions(p));
+    wrap.appendChild(box);
   });
   $("#stockWrap").innerHTML = "";
   $("#stockWrap").appendChild(wrap);
@@ -1507,6 +1559,7 @@ function renderStock() {
 function openProp(id) {
   var p = id ? S.props.filter(function (x) { return x.id === id; })[0] : null;
   var v = p || { deal_type: "إيجار", property_type: "شقة", state: "available" };
+  if (v.state === "unconfirmed") v = Object.assign({}, v, { state: "available" });
 
   var sel = function (name, val, opts) {
     return opts.map(function (o) {

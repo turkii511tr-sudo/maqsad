@@ -2,7 +2,7 @@
 
 create type public.conv_mode as enum ('auto', 'manual');
 create type public.lead_status as enum ('inquiry', 'qualified');
-create type public.prop_state as enum ('available', 'reserved', 'closed', 'rented', 'sold');
+create type public.prop_state as enum ('available', 'reserved', 'closed', 'rented', 'sold', 'unconfirmed');
 
 -- ===== sequences =====
 
@@ -223,6 +223,9 @@ create table public.properties (
   images text[] not null default '{}'::text[],
   notes text,
   created_at timestamp with time zone not null default now(),
+  confirmed_at timestamp with time zone not null default now(),
+  remind_count integer not null default 0,
+  remind_sent_at timestamp with time zone,
   details jsonb not null default '{}'::jsonb
 );
 
