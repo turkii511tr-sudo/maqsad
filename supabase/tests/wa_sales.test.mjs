@@ -322,6 +322,44 @@ await test("ما فيه شي بالحي المطلوب: البدائل تُعر�
   assert.equal(T.customers[0].handoff_reason, "qualified");
 });
 
+// ---------- تفاصيل العقار (migration 13) ----------
+const DET = { baths: 2, area: 120, furnished: "مؤثث", elevator: true, age: "جديد", mortgaged: true, negotiable: true, deed: "صك إلكتروني" };
+
+await test("العقار المعروض للعميل يطلع بتفاصيله، بدون الرهن والتفاوض", async () => {
+  const { T, f, handler } = await setup([
+    { id: "p1", office_id: "o1", city: "الرياض", district: "النرجس", deal_type: "إيجار", property_type: "شقة", price: 44000, rooms: 3, details: DET },
+  ]);
+  T.__matches = [{ ...prop("شقة النرجس A12", "النرجس"), id: "p1" }];
+  aiNext = QUAL;
+  const r = await (await handler(msg("966500000180", "شقة ايجار بالنرجس 45 الف سنوي"))).json();
+  assert.equal(r.route, "qualified_with_matches");
+  const out = waOut(f)[0];
+  assert.ok(out.includes("✨") && out.includes("المساحة 120 م²") && out.includes("دورات المياه 2") && out.includes("مؤثث") && out.includes("مصعد") &&
+    out.includes("العمر: جديد") && out.includes("صك إلكتروني"), out);
+  assert.ok(!out.includes("مرهون") && !out.includes("التفاوض"), out);
+});
+
+await test("عقار بلا تفاصيل: الرسالة كما كانت (ما يظهر سطر ✨)", async () => {
+  const { f, T, handler } = await setup();
+  T.__matches = [{ ...prop("شقة النرجس A12", "النرجس"), id: "p9" }];
+  aiNext = QUAL;
+  await handler(msg("966500000181", "شقة ايجار بالنرجس 45 الف سنوي"));
+  assert.ok(!waOut(f)[0].includes("✨"), waOut(f)[0]);
+});
+
+await test("الذكاء يستلم تفاصيل المخزون المعبّأة (بلا الرهن والتفاوض ولا اسم العقار) ويُسمح له بالإجابة منها فقط", async () => {
+  const { f, handler } = await setup([
+    { id: "p1", office_id: "o1", city: "الرياض", district: "النرجس", deal_type: "إيجار", property_type: "شقة", price: 44000, rooms: 3, details: DET, title: "شقة أبو فهد" },
+    { id: "p2", office_id: "o1", city: "الرياض", district: "حطين", deal_type: "بيع", property_type: "فيلا", price: 2350000, details: {} },
+  ]);
+  aiNext = { ...base, reply: "هلا، أبشر.", status: "استفسار عام" };
+  await handler(msg("966500000182", "كم دورة مياه الشقة؟"));
+  const pr = aiPrompt(f);
+  assert.ok(pr.includes("تفاصيل بعض العقارات") && pr.includes("دورات المياه 2") && pr.includes("النرجس"), pr);
+  assert.ok(!pr.includes("مرهون") && !pr.includes("أبو فهد"), pr);
+  assert.equal((pr.match(/^- .*دورات المياه/gm) || []).length, 1, "عقار بلا تفاصيل دخل القائمة");
+});
+
 for (const r of results) console.log(r.join("  "));
 const bad = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - bad}/${results.length} passed`);

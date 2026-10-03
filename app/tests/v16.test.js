@@ -100,6 +100,7 @@ async function test(name, fn) { try { await fn(); results.push(['✓', name]); }
     await p.click('#wzNext');
     await p.fill('#wzPrice', '30000'); await p.click('#wzNext');
     await p.fill('#wzLic', '7200034599'); await p.fill('#wzExp', inDays(60)); await p.click('#wzNext');
+    await p.click('#wzNext');   // تفاصيل العقار (تخطي)
     assert.match(await p.textContent('#wz'), /الطائف/);
     await p.click('#wzNext');
     await p.waitForTimeout(300);

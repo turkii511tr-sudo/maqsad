@@ -225,7 +225,8 @@ create table public.properties (
   created_at timestamp with time zone not null default now(),
   confirmed_at timestamp with time zone not null default now(),
   remind_count integer not null default 0,
-  remind_sent_at timestamp with time zone
+  remind_sent_at timestamp with time zone,
+  details jsonb not null default '{}'::jsonb
 );
 
 create table public.push_subs (

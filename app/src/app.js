@@ -1535,7 +1535,7 @@ function renderStock() {
   var wrap = el("div", "rows");
   list.forEach(function (p) {
     var sub = [[p.district, cities.length > 1 ? p.city : null].filter(Boolean).join("، "),
-      p.deal_type === "إيجار" ? "إيجار" : "بيع", p.rooms ? p.rooms + " غرف" : null, money(p.price) + " ريال"]
+      p.deal_type === "إيجار" ? "إيجار" : "بيع", p.rooms ? p.rooms + " غرف" : null].concat(pdBrief(p), [money(p.price) + " ريال"])
       .filter(Boolean).join(" · ");
     var tag = p.listable ? '<span class="tag ok">للعرض</span>'
       : p.state === "unconfirmed" ? '<span class="tag warn">' + PSTATE.unconfirmed + "</span>"
@@ -1604,10 +1604,19 @@ function openProp(id) {
         '<input id="pExp" class="input" type="date" value="' + esc(v.ad_license_expiry || "") + '"></div>' +
     "</div>" +
     '<p class="hint" style="margin-bottom:14px">بدون رقم ترخيص ساري لن يعرض البوت هذا العقار على أي عميل — حمايةً لك نظامياً.</p>' +
+    '<div class="field"><span class="flabel">تفاصيل العقار <span class="opt">(اختياري — يستفيد منها البوت في ردوده)</span></span>' +
+    '<div id="pdBox" class="pd-edit"></div></div>' +
     '<button class="btn" id="pSave">' + (p ? "حفظ التعديلات" : "أضف العقار") + "</button>" +
     '<div id="pMsg"></div>');
 
   if (p) $("#pMatches").onclick = function () { openPropMatches(p); };
+  var det = JSON.parse(JSON.stringify(v.details || {}));
+  var pdPaint = function () {
+    $("#pdBox").innerHTML = pdHtml(det, $("#pType").value, $("#pDeal").value);
+    pdWire($("#pdBox"), det, $("#pType").value, $("#pDeal").value);
+  };
+  $("#pType").onchange = pdPaint; $("#pDeal").onchange = pdPaint;
+  pdPaint();
   $("#pSave").onclick = function () {
     var b = this;
     if (!$("#pCity").value.trim()) { note("#pMsg", "اكتب المدينة — نفس اسم الحي موجود في أكثر من مدينة.", "err"); return; }
@@ -1621,6 +1630,7 @@ function openProp(id) {
         price: $("#pPrice").value, rooms: $("#pRooms").value,
         state: $("#pState").value, ad_license_no: $("#pLic").value,
         ad_license_expiry: $("#pExp").value,
+        details: pdClean(det, $("#pType").value, $("#pDeal").value),
       },
     }).then(function () {
       return call({ action: "properties" });
@@ -2991,13 +3001,189 @@ var PICON = {
   tag: '<path d="M20.6 13.4 12 22l-9-9V4h9l8.6 8.6a1 1 0 0 1 0 .8Z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
 };
 
+/* ---------- تفاصيل العقار الاختيارية (دورات المياه، العمر، المرافق…) ---------- */
+// كلها اختيارية، وغير المعبّأ = «غير معروف» (البوت يقول «أتأكد من المكتب»، ما يقول «لا»).
+// t: step = عدّاد +/− · num = رقم يكتبه · pick = اختيار واحد (اضغط مرة ثانية للإلغاء) · flag = «موجود».
+// ty = أنواع العقار المنطبقة · deal = نوع الطلب المنطبق. المفاتيح والقيم نفسها في api (PROP_DETAIL_SPEC)
+// وفي البوت (DETAIL_SPEC)؛ اختبار api.test.mjs يقارن المفاتيح.
+var PD_RES = ["شقة", "فيلا", "دور"], PD_BLD = PD_RES.concat(["محل"]);
+var PD_GROUPS = [
+  { id: "space", t: "المساحات والغرف", f: [
+    { k: "area", l: "المساحة (م²)", t: "num", max: 1000000, min: 1 },
+    { k: "baths", l: "دورات المياه", t: "step", max: 20, ty: PD_BLD },
+    { k: "halls", l: "الصالات", t: "step", max: 10, ty: PD_RES },
+    { k: "majlis", l: "المجالس", t: "step", max: 10, ty: PD_RES },
+    { k: "floors", l: "عدد الأدوار", t: "step", max: 10, min: 1, ty: ["فيلا"] },
+    { k: "floor_no", l: "رقم الدور", t: "pick", ty: ["شقة"], o: ["أرضي", "الأول", "الثاني", "الثالث", "الرابع", "الخامس فأعلى"] },
+    { k: "kitchen", l: "المطبخ", t: "pick", ty: PD_RES, o: ["راكب", "غير راكب"] },
+  ] },
+  { id: "cond", t: "الحالة والتجهيز", f: [
+    { k: "age", l: "عمر العقار", t: "pick", ty: PD_BLD, o: ["جديد", "أقل من ٥ سنوات", "٥–١٠ سنوات", "١٠–٢٠ سنة", "أكثر من ٢٠ سنة"] },
+    { k: "furnished", l: "الفرش", t: "pick", ty: PD_RES, o: ["مؤثث", "مؤثث جزئياً", "غير مؤثث"] },
+    { k: "finish", l: "التشطيب", t: "pick", ty: PD_BLD, o: ["ديلوكس", "عادي", "عظم"] },
+    { k: "ac", l: "المكيفات", t: "pick", ty: PD_BLD, o: ["راكب سبليت", "راكب مركزي", "راكب شباك", "غير راكب"] },
+  ] },
+  { id: "amen", t: "المرافق", f: [
+    { k: "parking", l: "مواقف السيارات", t: "step", max: 20, ty: PD_BLD },
+    { k: "elevator", l: "مصعد", t: "flag", ty: PD_RES },
+    { k: "garden", l: "حوش أو حديقة", t: "flag", ty: ["فيلا", "دور"] },
+    { k: "pool", l: "مسبح", t: "flag", ty: ["فيلا"] },
+    { k: "annex", l: "ملحق", t: "flag", ty: ["فيلا", "دور"] },
+    { k: "roof", l: "سطح", t: "flag", ty: PD_RES },
+    { k: "maid_room", l: "غرفة خادمة", t: "flag", ty: PD_RES },
+    { k: "driver_room", l: "غرفة سائق", t: "flag", ty: ["فيلا", "دور"] },
+    { k: "security", l: "كاميرات أو أمن", t: "flag", ty: PD_BLD },
+    { k: "own_meters", l: "عدادات كهرباء وماء مستقلة", t: "flag", ty: PD_BLD },
+  ] },
+  { id: "site", t: "الواجهة والشارع", f: [
+    { k: "facade", l: "اتجاه الواجهة", t: "pick", o: ["شمال", "جنوب", "شرق", "غرب", "شمال شرق", "شمال غرب", "جنوب شرق", "جنوب غرب"] },
+    { k: "street_width", l: "عرض الشارع (م)", t: "num", max: 200, min: 1 },
+    { k: "corner", l: "زاوية", t: "flag" },
+  ] },
+  { id: "rent", t: "شروط الإيجار", f: [
+    { k: "pay_period", l: "طريقة الدفع", t: "pick", deal: "إيجار", o: ["سنوي", "نصف سنوي", "ربع سنوي", "شهري"] },
+    { k: "lease_min", l: "أقل مدة للإيجار", t: "pick", deal: "إيجار", o: ["٦ أشهر", "سنة", "سنتين فأكثر"] },
+    { k: "tenants", l: "المستأجرون", t: "pick", deal: "إيجار", ty: PD_RES, o: ["عوائل فقط", "عزاب فقط", "عوائل وعزاب"] },
+    { k: "utilities", l: "الإيجار شامل الكهرباء والماء", t: "flag", deal: "إيجار", ty: PD_BLD },
+  ] },
+  { id: "sale", t: "بيانات البيع", f: [
+    { k: "deed", l: "نوع الصك", t: "pick", deal: "شراء", o: ["صك إلكتروني", "صك ورقي", "قيد التحويل"] },
+    { k: "mortgaged", l: "العقار مرهون", t: "flag", deal: "شراء" },
+    { k: "negotiable", l: "السعر قابل للتفاوض", t: "flag", deal: "شراء" },
+  ] },
+];
+function pdDeal(deal) { return deal === "بيع" ? "شراء" : deal; }
+function pdFields(g, ty, deal) {
+  return g.f.filter(function (f) {
+    return (!f.ty || f.ty.indexOf(ty) > -1) && (!f.deal || f.deal === pdDeal(deal));
+  });
+}
+// نفس فحص الخادم (cleanDetails في api): منطبق + قيمة صالحة فقط
+function pdClean(det, ty, deal) {
+  var out = {};
+  det = det || {};
+  PD_GROUPS.forEach(function (g) {
+    pdFields(g, ty, deal).forEach(function (f) {
+      var v = det[f.k];
+      if (f.t === "flag") { if (v === true) out[f.k] = true; }
+      else if (f.t === "pick") { if (f.o.indexOf(v) > -1) out[f.k] = v; }
+      else {
+        var n = Math.round(Number(latinDigits(v)));
+        var lo = f.min || 0;
+        if (v !== "" && v != null && isFinite(n) && n >= lo && n <= f.max) out[f.k] = n;
+      }
+    });
+  });
+  return out;
+}
+function pdCount(det, ty, deal) { return Object.keys(pdClean(det, ty, deal)).length; }
+function pdHtml(det, ty, deal) {
+  var clean = pdClean(det, ty, deal), first = true;
+  return PD_GROUPS.map(function (g) {
+    var fs = pdFields(g, ty, deal);
+    if (!fs.length) return "";
+    var steps = fs.filter(function (f) { return f.t !== "flag"; });
+    var flags = fs.filter(function (f) { return f.t === "flag"; });
+    var n = fs.filter(function (f) { return clean[f.k] != null; }).length;
+    var body = steps.map(function (f) {
+      var v = det[f.k];
+      if (f.t === "step") {
+        return '<div class="pd-f pd-row"><span class="pd-l">' + esc(f.l) + "</span>" +
+          '<div class="pd-step"><button type="button" data-pd="' + f.k + '" data-d="-1" aria-label="أنقص ' + esc(f.l) + '">−</button>' +
+          '<output data-out="' + f.k + '" class="num">' + (clean[f.k] != null ? clean[f.k] : "—") + "</output>" +
+          '<button type="button" data-pd="' + f.k + '" data-d="1" aria-label="زد ' + esc(f.l) + '">+</button></div></div>';
+      }
+      if (f.t === "num") {
+        return '<div class="pd-f pd-row"><label class="pd-l" for="pd_' + f.k + '">' + esc(f.l) + "</label>" +
+          '<input id="pd_' + f.k + '" class="input ltr pd-num" inputmode="numeric" data-pd="' + f.k + '" value="' + esc(v == null ? "" : v) + '"></div>';
+      }
+      return '<div class="pd-f"><span class="pd-l">' + esc(f.l) + '</span><div class="chips wrap">' +
+        f.o.map(function (o) {
+          return '<button type="button" class="chip" data-pd="' + f.k + '" data-v="' + esc(o) + '" aria-pressed="' + (v === o) + '">' + esc(o) + "</button>";
+        }).join("") + "</div></div>";
+    }).join("") + (flags.length ? '<div class="pd-f"><span class="pd-l">يتوفر فيه</span><div class="chips wrap">' +
+      flags.map(function (f) {
+        return '<button type="button" class="chip" data-pd="' + f.k + '" data-flag="1" aria-pressed="' + (det[f.k] === true) + '">' + esc(f.l) + "</button>";
+      }).join("") + "</div></div>" : "");
+    var open = first ? " open" : "";
+    first = false;
+    return '<details class="pd-grp" data-grp="' + g.id + '"' + open + "><summary><span>" + esc(g.t) + "</span>" +
+      '<b class="pd-n num"' + (n ? "" : " hidden") + ">" + n + "</b></summary>" + body + "</details>";
+  }).join("");
+}
+// يربط الأزرار والحقول بكائن det (يتعدل مباشرة) ويحدّث الشاشة بلا إعادة رسم (تبقى الأقسام المفتوحة مفتوحة)
+function pdWire(root, det, ty, deal, onChange) {
+  var spec = {};
+  PD_GROUPS.forEach(function (g) { g.f.forEach(function (f) { spec[f.k] = f; }); });
+  function sync() {
+    var clean = pdClean(det, ty, deal);
+    var bs = root.querySelectorAll("button[data-pd]");
+    for (var i = 0; i < bs.length; i++) {
+      var k = bs[i].getAttribute("data-pd");
+      if (bs[i].hasAttribute("data-flag")) bs[i].setAttribute("aria-pressed", String(det[k] === true));
+      else if (bs[i].hasAttribute("data-v")) bs[i].setAttribute("aria-pressed", String(det[k] === bs[i].getAttribute("data-v")));
+    }
+    var os = root.querySelectorAll("output[data-out]");
+    for (var j = 0; j < os.length; j++) {
+      var v = clean[os[j].getAttribute("data-out")];
+      os[j].textContent = v != null ? v : "—";
+    }
+    var gs = root.querySelectorAll("details[data-grp]");
+    for (var q = 0; q < gs.length; q++) {
+      var g = PD_GROUPS.filter(function (x) { return x.id === gs[q].getAttribute("data-grp"); })[0];
+      var n = pdFields(g, ty, deal).filter(function (f) { return clean[f.k] != null; }).length;
+      var b = gs[q].querySelector(".pd-n");
+      b.textContent = n; b.hidden = n === 0;
+    }
+    if (onChange) onChange(Object.keys(clean).length);
+  }
+  root.onclick = function (e) {
+    var b = e.target.closest ? e.target.closest("button[data-pd]") : null;
+    if (!b || !root.contains(b)) return;
+    var k = b.getAttribute("data-pd"), f = spec[k];
+    if (b.hasAttribute("data-d")) {
+      var lo = f.min || 1, cur = det[k], next;
+      if (cur == null) next = b.getAttribute("data-d") === "1" ? lo : null;
+      else next = Number(cur) + Number(b.getAttribute("data-d"));
+      if (next == null || next < lo) delete det[k]; else det[k] = Math.min(next, f.max);
+    } else if (b.hasAttribute("data-flag")) {
+      if (det[k] === true) delete det[k]; else det[k] = true;
+    } else {
+      var v = b.getAttribute("data-v");
+      if (det[k] === v) delete det[k]; else det[k] = v;
+    }
+    sync();
+  };
+  root.oninput = function (e) {
+    var t = e.target;
+    if (!t || t.tagName !== "INPUT" || !t.hasAttribute("data-pd")) return;
+    if (t.value.trim() === "") delete det[t.getAttribute("data-pd")]; else det[t.getAttribute("data-pd")] = t.value;
+    sync();
+  };
+}
+// تفاصيل آخر عقار مثله (نفس النوع ونفس الطلب) — يوفّر التعبئة لمن عنده وحدات متشابهة
+function pdLastLike(ty, deal) {
+  var hit = (S.props || []).filter(function (p) {
+    return p.property_type === ty && pdDeal(p.deal_type) === pdDeal(deal) && p.details && Object.keys(p.details).length;
+  })[0];
+  return hit ? pdClean(hit.details, ty, deal) : null;
+}
+// سطر مختصر في قائمة المخزون
+function pdBrief(p) {
+  var d = p.details || {}, out = [];
+  if (d.baths) out.push(d.baths + " دورة مياه");
+  if (d.area) out.push(d.area + " م²");
+  return out;
+}
+
 /* ---------- إضافة عقار بخطوات ---------- */
 var PROP_DRAFT = "maqsad_prop_draft";
 function openPropWizard(done) {
   var d = lsGet(PROP_DRAFT) || { deal_type: "", property_type: "", city: defaultCity(), district: "", rooms: "", title: "", price: "",
-    ad_license_no: "", ad_license_expiry: "", step: 0 };
+    ad_license_no: "", ad_license_expiry: "", details: {}, step: 0 };
   if (d.city == null) d.city = defaultCity();   // مسودة محفوظة قبل حقل المدينة
-  var N = 5;
+  if (!d.details) d.details = {};                // مسودة محفوظة قبل التفاصيل
+  var N = 6;
   openSheet("عقار جديد", '<div id="wz"></div>');
   var save = function () { lsSet(PROP_DRAFT, d); };
   var host = function () { return $("#wz"); };
@@ -3077,19 +3263,31 @@ function openPropWizard(done) {
       $("#wzLic").oninput = function () { d.ad_license_no = this.value; save(); lh(); };
       $("#wzExp").oninput = function () { d.ad_license_expiry = this.value; save(); lh(); };
       lh();
+    } else if (i === 4) {
+      var like = pdLastLike(d.property_type, d.deal_type);
+      h.innerHTML = stepHead(4, N, "تفاصيل العقار", "كلها اختيارية — كل ما عبّيت أكثر، البوت يجاوب العملاء بدقة أكثر.") +
+        (like ? '<button class="btn ghost sm" type="button" id="pdCopy" style="margin-bottom:12px">انسخ تفاصيل آخر عقار مثله</button>' : "") +
+        '<div id="pdBox">' + pdHtml(d.details, d.property_type, d.deal_type) + "</div>" +
+        nav(true, "تخطي", true);
+      var pdNext = function (n) { $("#wzNext").textContent = n ? "التالي" : "تخطي"; };
+      pdWire($("#pdBox"), d.details, d.property_type, d.deal_type, function (n) { save(); pdNext(n); });
+      pdNext(pdCount(d.details, d.property_type, d.deal_type));
+      if (like) $("#pdCopy").onclick = function () { d.details = like; save(); paint(); };
     } else {
       var row = function (k, v, step) {
         return "<div><dt>" + esc(k) + "</dt><dd>" + esc(v || "—") +
           ' <button type="button" class="linkbtn" data-go="' + step + '">تعديل</button></dd></div>';
       };
       var n = Number(digits(latinDigits(d.price)));
-      h.innerHTML = stepHead(4, N, "راجع قبل الحفظ") +
+      var pdN = pdCount(d.details, d.property_type, d.deal_type);
+      h.innerHTML = stepHead(5, N, "راجع قبل الحفظ") +
         '<div class="card"><dl class="dl">' +
           row("العرض", d.deal_type === "إيجار" ? "للإيجار" : "للبيع", 0) + row("العقار", d.property_type, 0) +
           row("المدينة", d.city, 1) + row("الحي", d.district, 1) + (isLand() ? "" : row("الغرف", d.rooms, 1)) +
           row("الاسم", d.title || autoTitle(), 1) +
           row("السعر", n ? money(n) + " ريال" + (d.deal_type === "إيجار" ? " سنوياً" : "") : "", 2) +
           row("ترخيص الإعلان", d.ad_license_no ? d.ad_license_no + (d.ad_license_expiry ? " — ينتهي " + gDate(d.ad_license_expiry) : "") : "بدون — ما يُعرض", 3) +
+          row("التفاصيل", pdN ? pdN + " تفصيل" : "بدون", 4) +
         "</dl></div>" + nav(true, "احفظ العقار", true);
       var gs = h.querySelectorAll("[data-go]");
       for (var g = 0; g < gs.length; g++) (function (b) { b.onclick = function () { go(Number(b.dataset.go)); }; })(gs[g]);
@@ -3105,6 +3303,7 @@ function openPropWizard(done) {
       title: (d.title || autoTitle()).trim(), deal_type: d.deal_type, property_type: d.property_type,
       city: d.city.trim(), district: d.district.trim(), rooms: isLand() ? "" : d.rooms, price: digits(latinDigits(d.price)), state: "available",
       ad_license_no: digits(latinDigits(d.ad_license_no)), ad_license_expiry: d.ad_license_expiry,
+      details: pdClean(d.details, d.property_type, d.deal_type),
     } }).then(function (sr) { saved = sr; return call({ action: "properties" }); }).then(function (r) {
       lsSet(PROP_DRAFT, null);
       S.props = r.properties || [];
@@ -3167,13 +3366,14 @@ function matchWaText(c, p) {
   var nm = c.name ? " " + firstName(c.name) : "";
   var rent = p.deal_type === "إيجار";
   return "هلا" + nm + "، معك " + office + ". نزل عندنا " + p.property_type + (rent ? " للإيجار" : " للبيع") +
-    " في " + p.district + (p.rooms ? " (" + p.rooms + " غرف)" : "") + " بـ " + money(p.price) + " ريال" + (rent ? " سنوياً" : "") +
+    " في " + p.district + (p.rooms ? " (" + [p.rooms + " غرف"].concat(pdBrief(p)).join("، ") + ")" : "") + " بـ " + money(p.price) + " ريال" + (rent ? " سنوياً" : "") +
     "، قريب من طلبك. يناسبك أرسل لك التفاصيل؟" + (p.ad_license_no ? "\nرقم ترخيص الإعلان: " + p.ad_license_no : "");
 }
 function openPropMatches(p) {
   openSheet("عملاء يطابقون العقار", skeleton(3));
   call({ action: "prop_matches", id: p.id }).then(function (r) {
     var list = r.customers || [], pr = r.property || p;
+    if (!pr.details && p.details) pr = Object.assign({}, pr, { details: p.details });
     var licensed = !!pr.ad_license_no && (!pr.ad_license_expiry || pr.ad_license_expiry >= new Date().toISOString().slice(0, 10));
     var head = '<p class="hint tight">طلبات عملاء مكتبك في آخر <span class="num">' + (r.days || 30) + "</span> يوم تطابق «" +
       esc(pr.title) + "»: نفس نوع الطلب والعقار والحي، والسعر ضمن ميزانيتهم.</p>";
