@@ -3,7 +3,7 @@
 ## ١) دوال الخادم (Supabase Edge Functions)
 
 - كل مجلد داخل `supabase/functions/` دالة مستقلة، وملفها الرئيسي `index.ts`.
-- الدوال `api` و`wa-webhook` و`fal-check` تحتاج معها `notify.ts` (نسخة من `_shared/notify.ts`).
+- الدوال `api` و`wa-webhook` و`fal-check` و`stock-check` تحتاج معها `notify.ts` (نسخة من `_shared/notify.ts`).
 - كل الدوال تُنشر مع `verify_jwt = false` (الحماية داخل الكود: رابط سري أو توقيع أو جلسة).
 - بعد النشر: `get_edge_function` ثم مطابقة كل ملف بالمستودع حرفاً بحرف (آخر مطابقة كاملة: wa-webhook نسخة ١٧ = v5.4، ٢ أكتوبر ٢٠٢٦).
 - بسطر الأوامر:

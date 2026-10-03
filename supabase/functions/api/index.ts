@@ -1409,6 +1409,8 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
       if (city) row.city = city;
       else if (!p.id) return json({ error: "المدينة مطلوبة" }, 400);
       if (!row.title || !row.district) return json({ error: "الاسم والحي مطلوبان" }, 400);
+      // حفظ عقار موجود يعني أن المكتب راجعه: يبدأ عدّ التأكيد من جديد (راجع prop_mark ودالة stock-check)
+      if (p.id) Object.assign(row, { confirmed_at: new Date().toISOString(), remind_count: 0, remind_sent_at: null });
       const res = p.id
         ? await db.from("properties").update(row).eq("office_id", oid).eq("id", p.id).select().maybeSingle()
         : await db.from("properties").insert(row).select().maybeSingle();
@@ -1420,6 +1422,29 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
         matches = (m ?? []).length;
       }
       return json({ ok: true, property: res.data, matches });
+    }
+
+    // ===== تأكيد توفّر العقار بضغطة: «ما زال متاح» · «تم تأجيره» · «تم بيعه» · «إعادة للمتاح» =====
+    // يختفي من البوت فور التأجير/البيع (v_listable_properties تقبل 'available' فقط).
+    // «ما زال متاح» على عقار «غير مؤكَّد» يرجعه متاحاً. ids أو id (حتى ٥٠). أي موظف في المكتب.
+    case "prop_mark": {
+      const to = String(b.to ?? "");
+      if (!["confirm", "rented", "sold", "available"].includes(to)) return json({ error: "bad_request" }, 400);
+      const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).filter((x: unknown) => typeof x === "string" && x).slice(0, 50);
+      if (!ids.length) return json({ error: "bad_request" }, 400);
+      const fresh = { confirmed_at: new Date().toISOString(), remind_count: 0, remind_sent_at: null };
+      if (to === "confirm") {
+        // المتاح والمحجوز يبقى كما هو، و«غير مؤكَّد» يرجع متاحاً؛ المؤجّر والمباع والمغلق ما يتغيّر
+        const a = await db.from("properties").update(fresh).eq("office_id", oid).in("id", ids).in("state", ["available", "reserved"]);
+        const c = await db.from("properties").update({ ...fresh, state: "available" }).eq("office_id", oid).in("id", ids).eq("state", "unconfirmed");
+        if (a.error || c.error) return json({ error: (a.error ?? c.error)!.message }, 400);
+      } else {
+        const r = await db.from("properties").update({ ...fresh, state: to }).eq("office_id", oid).in("id", ids);
+        if (r.error) return json({ error: r.error.message }, 400);
+      }
+      await db.from("events").insert({ office_id: oid, kind: "prop_mark", detail: { by: ctx.staff.name, to, n: ids.length } });
+      const { data } = await db.from("properties").select("*").eq("office_id", oid).in("id", ids);
+      return json({ ok: true, properties: decorate(data ?? [], office) });
     }
 
     // ===== عملاء سابقون يطابقون عقاراً: طلبات عملاء المكتب نفسه في آخر ٣٠ يوماً =====

@@ -202,6 +202,12 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
   background:none;border-inline:0;border-top:0;cursor:pointer;min-height:var(--tap);
   transition:background .12s ease}
 .row:last-child{border-bottom:0}
+/* عقار في المخزون: الصف + أزرار الضغطة الواحدة تحته */
+.prow{border-bottom:1px solid var(--hair)}
+.prow:last-child{border-bottom:0}
+.prow .row{border-bottom:0}
+.pact{display:flex;gap:var(--s2);flex-wrap:wrap;padding:0 var(--s4) 10px}
+.pact:empty{display:none}
 .row:hover{background:var(--sunk)}
 .row.static{cursor:default}
 .row.static:hover{background:none}

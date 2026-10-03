@@ -854,6 +854,56 @@ await test("v17 الفرص الضائعة: الجديدة إذا منشورة، 
   assert.equal(r.body.gap[0].district, "النرجس"); assert.deepEqual(b.T.__gapCalls, ["v2", "v1"]);
 });
 
+await test("v18 زر «تم تأجيره/تم بيعه»: العقار يخرج من المتاحين، وإعادته بضغطة، ومكتب ثاني ما يلمسه", async () => {
+  const old = new Date(Date.now() - 20 * 864e5).toISOString();
+  const { T, h } = await boot((d) => {
+    d.properties.push(
+      { id: "P1", office_id: "o1", title: "شقة النرجس", district: "النرجس", city: "الرياض", state: "available", confirmed_at: old, remind_count: 2, remind_sent_at: old },
+      { id: "P2", office_id: "o1", title: "فيلا", district: "الملقا", city: "الرياض", state: "unconfirmed", confirmed_at: old, remind_count: 2 },
+      { id: "P3", office_id: "o2", title: "شقة مكتب آخر", district: "الياسمين", city: "الرياض", state: "available", confirmed_at: old, remind_count: 0 });
+  });
+  let r = await call(h, { action: "prop_mark", id: "P1", to: "rented" }, "s2");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  let p = T.properties.find((x) => x.id === "P1");
+  assert.equal(p.state, "rented"); assert.equal(p.remind_count, 0); assert.equal(p.remind_sent_at, null);
+  assert.equal(r.body.properties[0].listable, false);
+  assert.ok(T.events.some((e) => e.kind === "prop_mark" && e.detail.to === "rented"));
+  // إعادة للمتاح (تراجع)
+  r = await call(h, { action: "prop_mark", id: "P1", to: "available" }, "s2");
+  assert.equal(T.properties.find((x) => x.id === "P1").state, "available");
+  // مكتب ثاني: لا أثر
+  r = await call(h, { action: "prop_mark", id: "P3", to: "sold" }, "s2");
+  assert.equal(T.properties.find((x) => x.id === "P3").state, "available");
+  // قيمة غير معروفة / بلا معرّف
+  assert.equal((await call(h, { action: "prop_mark", id: "P1", to: "closed" }, "s2")).status, 400);
+  assert.equal((await call(h, { action: "prop_mark", to: "confirm" }, "s2")).status, 400);
+});
+
+await test("v18 «ما زال متاح»: يجدد التأكيد، ويرجع «غير مؤكَّد» متاحاً، ولا يلمس المؤجّر", async () => {
+  const old = new Date(Date.now() - 20 * 864e5).toISOString();
+  const { T, h } = await boot((d) => {
+    d.properties.push(
+      { id: "P1", office_id: "o1", title: "أ", district: "ح", state: "available", confirmed_at: old, remind_count: 1, remind_sent_at: old },
+      { id: "P2", office_id: "o1", title: "ب", district: "ح", state: "unconfirmed", confirmed_at: old, remind_count: 2 },
+      { id: "P4", office_id: "o1", title: "ج", district: "ح", state: "rented", confirmed_at: old, remind_count: 0 });
+  });
+  const r = await call(h, { action: "prop_mark", ids: ["P1", "P2", "P4"], to: "confirm" }, "s2");
+  assert.equal(r.status, 200);
+  const by = Object.fromEntries(T.properties.map((x) => [x.id, x]));
+  assert.equal(by.P1.state, "available"); assert.ok(by.P1.confirmed_at > old); assert.equal(by.P1.remind_count, 0);
+  assert.equal(by.P2.state, "available"); assert.equal(by.P2.remind_count, 0);
+  assert.equal(by.P4.state, "rented"); assert.equal(by.P4.confirmed_at, old);
+});
+
+await test("v18 حفظ عقار موجود يجدد تأكيده، وحالة «غير مؤكَّد» ما تُكتب من النموذج", async () => {
+  const old = new Date(Date.now() - 20 * 864e5).toISOString();
+  const { T, h } = await boot((d) => { d.properties.push({ id: "P1", office_id: "o1", title: "أ", district: "ح", city: "الرياض", state: "unconfirmed", confirmed_at: old, remind_count: 2 }); });
+  let r = await call(h, { action: "property_save", property: { id: "P1", title: "أ", district: "ح", price: 1, state: "unconfirmed" } }, "s2");
+  assert.equal(r.status, 200);
+  const p = T.properties.find((x) => x.id === "P1");
+  assert.equal(p.state, "available"); assert.equal(p.remind_count, 0); assert.ok(p.confirmed_at > old);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
