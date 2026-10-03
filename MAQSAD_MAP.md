@@ -1,6 +1,6 @@
 # خريطة مشروع مقصد — MAQSAD_MAP
 
-آخر تحقق: 79ccaeb (الوسيط المسؤول والفرص الضائعة منشورة: migration 12 · api v18 · الواجهة) — 2026-10-02
+آخر تحقق: 79ccaeb (الوسيط المسؤول والفرص الضائعة منشورة: migration 12 · api v18 · الواجهة) — 2026-10-02 · تفاصيل العقار (migration 13) في المستودع فقط، غير منشورة
 
 خريطة ملاحة لـ Claude Code: من أين تبدأ، وما الذي تفتحه، وما الذي لا تحتاج أن تفتحه.
 المراجع بالاسم (ملف + دالة/جدول/action)، بلا أرقام أسطر. الكود الفعلي هو الحكم دائماً.
@@ -32,6 +32,7 @@
 | الوضع اليدوي / التدخل | B1، B3 | `api` action `set_mode` · عمود `customers.mode` |
 | إيقاف الرسائل / «ابدأ» | B1 | `wa-webhook/index.ts` (`commandOf`) · `customers.opted_out` |
 | المكتب / حالة المكتب / يحتاج إجراء | B4 إدارة المكاتب | جدول `offices` · `api` actions `office_save`, `offices_list` (`wa_linked`) · `app.js` (`officeStatus`, `renderOffices`, `openOffice`) |
+| تفاصيل العقار (دورات المياه، المساحة، العمر، المرافق…) | B5، B1 | عمود `properties.details` (jsonb) · `api` (`PROP_DETAIL_SPEC`, `cleanDetails`) · `app.js` (`PD_GROUPS`, `pdHtml`, `pdWire`, `pdClean`) · `wa` (`DETAIL_SPEC`, `detailPhrases`, `detailsText`, `propDetailsOf`) |
 | العقار / المخزون | B5 العقارات والمطابقة | جدول `properties` · `api` actions `properties`, `property_save` · `app.js` (`renderStock`, `openProp`, `openPropWizard`) |
 | الإعلان / ترخيص الإعلان | B5 | `properties.ad_license_no`, `ad_license_expiry` · view `v_listable_properties` · `api` (`decorate`) |
 | المطابقة / عقارات مناسبة | B5 | SQL `match_properties`, `match_customers`, `annual_budget` · `api` action `prop_matches` |
@@ -62,7 +63,7 @@
 - **نقطة الدخول**: `wa` → `Deno.serve` (GET = تحقق ميتا، POST بتوقيع `x-hub-signature-256` = ميتا عبر `handleMeta`، POST بـ `?k=` = UltraMsg).
 - **الدوال الأساسية**: `handleMeta`, `cloudOffice`, `processIncoming`, `processTurn`, `commandOf`, `askAI`, `callModel`, `systemPrompt`, `aiUserPrompt`, `recentHistory`, `officeInventory`/`inventoryText`/`cityList`, `budgetDoubt`/`bareNumbers`, `matchProperties`, `saveCustomer`, `maskText`/`unmask`/`unmaskAI`, `nextQuestion`, `formatProperties`, `handoff`, `sendWhatsApp`, `notifyOffice`, `handleVoice`, `mediaNudge`, `metaSignatureOk`.
 - **التسليم للوسيط** (v5.2) بحالة الطلب لا بعدد الرسائل: اكتمال الطلب (`qualified`) · كلمة موظف أو حكم الذكاء (`human`) · طلب معاينة (`human`، route `viewing_handoff`) · مالك يعرض (`owner_offer`) · تعذّر الذكاء (`ai_error`) · حماية فقط (`quota`): `STUCK_TURNS` ردود بلا معلومة جديدة، أو `max(msg_quota, DAILY_REPLY_CAP)` رداً آلياً خلال ٢٤ ساعة. العميل الراجع بطلب مكتمل (`handed_at` + `qualified`) يُسأل «نفس طلبك السابق؟» ولا يُسلّم إلا إذا أكد (`same_request`) أو غيّر. عميل مُسلّم بلا نتيجة اتصال (أو «ما رد») لأكثر من `REOPEN_DAYS` (٣) يرجع للمساعد إذا راسل، مع تنبيه المكتب (حدث `handoff_reopened`)؛ ما يشمل «taken» ولا من سُجّل له تواصل.
-- **ما يصل للذكاء**: السياق المسجل + آخر ٨ رسائل (`recentHistory`) + مخزون المكتب المرخّص كأحياء ونطاق أسعار (`v_listable_properties`، فقط إذا فال سارية) + نطاق المدن. كل ذلك يمر بالإخفاء.
+- **ما يصل للذكاء**: السياق المسجل + آخر ٨ رسائل (`recentHistory`) + مخزون المكتب المرخّص كأحياء ونطاق أسعار (`v_listable_properties`، فقط إذا فال سارية) + نطاق المدن + حتى ١٢ سطراً «تفاصيل بعض العقارات» (`detailsText`: بلا اسم العقار ولا الرخصة). كل ذلك يمر بالإخفاء. العقارات المعروضة للعميل تحمل سطر ✨ بتفاصيلها (`formatProperties` + `propDetailsOf`)، وأي خطأ في جلب التفاصيل = رسالة بلا تفاصيل.
 - **الجداول / SQL**: `customers`, `messages`, `events`, `offices`, `staff`, `privacy_requests`, view `v_listable_properties` · `ingest_message`, `finish_turn`, `finish_processing`, `match_properties_v2` (ويرجع لـ `match_properties` إذا ما انشرت migration 10), `bump_usage`.
 - **تكاملات**: Meta Graph API، UltraMsg (انتقالي)، OpenAI (فهم + تحويل صوت).
 - **يعتمد على**: B5 (المطابقة)، B6 (`falState`)، B8 (`notify.ts`)، B2 (`handleLogin` لرسائل الدخول).
@@ -107,9 +108,10 @@
 - **الوظيفة**: مخزون المكتب، إضافة عقار بخطوات، شرط ترخيص الإعلان، مطابقة العملاء بالعقارات.
 - **نقطة الدخول**: `app.js` → `renderStock`, `openProp`, `openPropWizard`, `openPropMatches` (الشاشة `s-stock`) ← `api` actions `properties`, `property_save`, `prop_matches`؛ ومن B1 → `processTurn` ← `match_properties`.
 - **الدوال**: `api`: `decorate` (يحسب `listable`/`block_reason`)، `property_save` (المدينة إلزامية للجديد، «بيع» ← «شراء») · `app.js`: `propMatches`, `propCities`, `defaultCity`, `cityOptions`, `matchWaText`, `openMatchesPrompt`.
+- **التفاصيل الاختيارية** (migration 13، `properties.details`): كلها اختيارية وغير المعبّأ = غير معروف (يحفظ فقط `true` للمرافق). المفاتيح تنطبق حسب نوع العقار ونوع الطلب (إيجار/شراء). الخطوة الخامسة في `openPropWizard` وقسم في `openProp` (أقسام تنطوي + عدّادات وأزرار اختيار + «انسخ تفاصيل آخر عقار مثله»). `api:cleanDetails` يرمي أي مفتاح أو قيمة أو حقل لا ينطبق، والنسخة القديمة من التطبيق (بلا `details`) ما تمسح المحفوظ. القائمة مكررة عمداً في `api` و`app.js` و`wa` (البوت بلا «مرهون» و«قابل للتفاوض» — يبقون مع الوسيط) واختبار `api.test.mjs` يقارن المفاتيح الثلاثة. الـview `v_listable_properties` يرجع `details` في آخره.
 - **الجداول / SQL**: `properties` · view `v_listable_properties` · `match_properties_v2` (فترة الميزانية + المدينة + «بيع»=«شراء» + تطبيع الحي `ar_norm`)، `match_properties` (قديمة، للنسخة المنشورة)، `match_customers`, `annual_budget`.
 - **يعتمد على**: B6 (مكتب بلا فال سارية لا تُعرض عقاراته).
-- **الاختبار**: `wa.test.mjs`, `wa_sales.test.mjs` (المطابقة في المحادثة) · `node app/tests/v14.test.js`, `v16.test.js` · `api.test.mjs` · SQL محلياً على Postgres (انظر `docs/DEPLOY.md`).
+- **الاختبار**: `wa.test.mjs`, `wa_sales.test.mjs` (المطابقة في المحادثة، وتفاصيل العقار في الردود) · `node app/tests/v14.test.js`, `v16.test.js`, `v19.test.js` (تفاصيل العقار) · `api.test.mjs` · SQL محلياً على Postgres (انظر `docs/DEPLOY.md`).
 - **النشر**: SQL ← `supabase/db/migrations/` + تحديث `02_functions_jobs.sql`؛ الواجهة ← B13.
 - **الخطورة**: متوسطة — خطأ في الـ view يعرض إعلاناً بلا ترخيص (مخالفة نظامية).
 

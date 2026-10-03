@@ -236,11 +236,20 @@ async function test(name, fn) { try { await fn(); results.push(['✓', name]); }
     await shot(p, 'prop-4-m');
     await p.fill('#wzLic', '7200034512'); await p.fill('#wzExp', riyadh(90));
     await p.click('#wzNext');
+    // تفاصيل العقار: اختيارية، تخطي أول ما تُعبَّأ تتحول لـ «التالي»
+    assert.match(await p.textContent('#wzNext'), /تخطي/);
+    await shot(p, 'prop-details-m');
+    await p.click('[data-pd="baths"][data-d="1"]'); await p.click('[data-pd="baths"][data-d="1"]');
+    await p.click('summary:has-text("المرافق")'); await p.click('[data-pd="elevator"]');
+    assert.match(await p.textContent('#wzNext'), /التالي/);
+    await p.click('#wzNext');
     assert.match(await p.textContent('#wz'), /شقة النرجس/);
+    assert.match(await p.textContent('#wz'), /2 تفصيل/);
     await shot(p, 'prop-5-m');
     await p.click('#wzNext'); await p.waitForTimeout(250);
     const ps = api.calls.find((c) => c.action === 'property_save');
     assert.equal(ps.property.price, '45000'); assert.equal(ps.property.title, 'شقة النرجس'); assert.equal(ps.property.deal_type, 'إيجار');
+    assert.deepEqual(ps.property.details, { baths: 2, elevator: true });
     assert.match(await p.textContent('#ob'), /أضف وسطاء مكتبك/);
     await p.fill('#obTName', 'سعد'); await p.fill('#obTPhone', '0551112222'); await p.click('#obTAdd'); await p.waitForTimeout(200);
     assert.match(await p.textContent('#obTeam'), /سعد/);

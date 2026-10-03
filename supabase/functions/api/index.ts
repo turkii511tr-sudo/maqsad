@@ -446,6 +446,63 @@ async function bump(officeId: string | null | undefined, f: Record<string, numbe
 
 const OUTCOMES = ["no_answer", "contacted", "viewing", "deal", "lost"];
 const PROP_STATES = ["available", "reserved", "rented", "sold", "closed"];
+
+// تفاصيل العقار الاختيارية (properties.details): المفاتيح والقيم المسموحة فقط، وتنطبق حسب نوع العقار ونوع الطلب.
+// n = رقم صحيح حتى الحد · p = اختيار من قائمة · f = «موجود» (ما يُحفظ إلا true؛ غير المعبّأ = غير معروف).
+// نفس المفاتيح في الواجهة (PD_GROUPS في app.js) وفي البوت (DETAIL_SPEC في wa-webhook) — اختبار api.test.mjs يقارنها.
+const PD_RES = ["شقة", "فيلا", "دور"], PD_BLD = [...PD_RES, "محل"];
+const PROP_DETAIL_SPEC: [string, "n" | "p" | "f", number | string[], string[] | null, string | null][] = [
+  ["area", "n", 1000000, null, null],
+  ["baths", "n", 20, PD_BLD, null],
+  ["halls", "n", 10, PD_RES, null],
+  ["majlis", "n", 10, PD_RES, null],
+  ["floors", "n", 10, ["فيلا"], null],
+  ["floor_no", "p", ["أرضي", "الأول", "الثاني", "الثالث", "الرابع", "الخامس فأعلى"], ["شقة"], null],
+  ["kitchen", "p", ["راكب", "غير راكب"], PD_RES, null],
+  ["age", "p", ["جديد", "أقل من ٥ سنوات", "٥–١٠ سنوات", "١٠–٢٠ سنة", "أكثر من ٢٠ سنة"], PD_BLD, null],
+  ["furnished", "p", ["مؤثث", "مؤثث جزئياً", "غير مؤثث"], PD_RES, null],
+  ["finish", "p", ["ديلوكس", "عادي", "عظم"], PD_BLD, null],
+  ["ac", "p", ["راكب سبليت", "راكب مركزي", "راكب شباك", "غير راكب"], PD_BLD, null],
+  ["parking", "n", 20, PD_BLD, null],
+  ["elevator", "f", 0, PD_RES, null],
+  ["garden", "f", 0, ["فيلا", "دور"], null],
+  ["pool", "f", 0, ["فيلا"], null],
+  ["annex", "f", 0, ["فيلا", "دور"], null],
+  ["roof", "f", 0, PD_RES, null],
+  ["maid_room", "f", 0, PD_RES, null],
+  ["driver_room", "f", 0, ["فيلا", "دور"], null],
+  ["security", "f", 0, PD_BLD, null],
+  ["own_meters", "f", 0, PD_BLD, null],
+  ["facade", "p", ["شمال", "جنوب", "شرق", "غرب", "شمال شرق", "شمال غرب", "جنوب شرق", "جنوب غرب"], null, null],
+  ["street_width", "n", 200, null, null],
+  ["corner", "f", 0, null, null],
+  ["pay_period", "p", ["سنوي", "نصف سنوي", "ربع سنوي", "شهري"], null, "إيجار"],
+  ["lease_min", "p", ["٦ أشهر", "سنة", "سنتين فأكثر"], null, "إيجار"],
+  ["tenants", "p", ["عوائل فقط", "عزاب فقط", "عوائل وعزاب"], PD_RES, "إيجار"],
+  ["utilities", "f", 0, PD_BLD, "إيجار"],
+  ["deed", "p", ["صك إلكتروني", "صك ورقي", "قيد التحويل"], null, "شراء"],
+  ["mortgaged", "f", 0, null, "شراء"],
+  ["negotiable", "f", 0, null, "شراء"],
+];
+// ما يُحفظ إلا الحقول المنطبقة على نوع العقار ونوع الطلب بقيمة صالحة؛ أي شي ثاني يُرمى بصمت
+function cleanDetails(raw: unknown, type: string, deal: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  const r = raw as Record<string, unknown>;
+  const dl = deal === "بيع" ? "شراء" : deal;
+  for (const [k, kind, arg, types, only] of PROP_DETAIL_SPEC) {
+    if ((types && !types.includes(type)) || (only && only !== dl)) continue;
+    const v = r[k];
+    if (kind === "n") {
+      const n = Math.round(Number(v));
+      const min = k === "floors" || k === "area" ? 1 : 0;
+      if (v !== "" && v != null && Number.isFinite(n) && n >= min && n <= (arg as number)) out[k] = n;
+    } else if (kind === "p") {
+      if (typeof v === "string" && (arg as string[]).includes(v)) out[k] = v;
+    } else if (v === true) out[k] = true;
+  }
+  return out;
+}
 const LEAD_COLS = "id,name,phone,deal_type,property_type,city,budget,budget_period,location,rooms,status,mode," +
   "summary,msg_count,last_message_at,opted_out,handoff_reason,handed_at,outcome,outcome_at,assigned_to";
 
@@ -1404,6 +1461,8 @@ async function handle(req: Request, json: (b: unknown, s?: number) => Response) 
         ad_license_no: p.ad_license_no ? String(p.ad_license_no).trim() : null,
         ad_license_expiry: p.ad_license_expiry || null,
       };
+      // التفاصيل الاختيارية: نسخة تطبيق قديمة ما ترسلها فتبقى المحفوظة كما هي
+      if (p.details !== undefined) row.details = cleanDetails(p.details, String(row.property_type), String(row.deal_type));
       // نفس اسم الحي موجود في أكثر من مدينة: العقار الجديد ما يُحفظ بلا مدينة.
       // التعديل بلا مدينة (نسخة تطبيق قديمة) يُبقي المدينة المحفوظة كما هي
       if (city) row.city = city;

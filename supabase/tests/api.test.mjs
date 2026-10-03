@@ -854,6 +854,50 @@ await test("v17 الفرص الضائعة: الجديدة إذا منشورة، 
   assert.equal(r.body.gap[0].district, "النرجس"); assert.deepEqual(b.T.__gapCalls, ["v2", "v1"]);
 });
 
+await test("v19 تفاصيل العقار: تُحفظ المنطبق فقط بقيم صالحة، والتعديل بلا تفاصيل يبقيها، وإرسال {} يمسحها", async () => {
+  const { T, h } = await boot((d) => { d.offices[1].active = true; });
+  const details = {
+    baths: 2, halls: "1", area: "٠", floor_no: "الثاني", furnished: "مؤثث", elevator: true, parking: 99,
+    pool: true,            // مسبح على شقة: ما ينطبق
+    mortgaged: true,       // «مرهون» على إيجار: ما ينطبق
+    ac: "نوع مخترع", hacked: "x", corner: "yes",
+  };
+  let r = await call(h, { action: "property_save", property: { title: "شقة", city: "الرياض", district: "النرجس", price: 42000,
+    deal_type: "إيجار", property_type: "شقة", details } }, "s2");
+  assert.equal(r.status, 200);
+  const pid = r.body.property.id;
+  assert.deepEqual(T.properties.find((x) => x.id === pid).details,
+    { baths: 2, halls: 1, floor_no: "الثاني", furnished: "مؤثث", elevator: true });
+  // نسخة قديمة تعدّل السعر بلا تفاصيل: التفاصيل تبقى
+  r = await call(h, { action: "property_save", property: { id: pid, title: "شقة", district: "النرجس", price: 41000 } }, "s2");
+  assert.equal(r.status, 200);
+  assert.equal(T.properties.find((x) => x.id === pid).details.baths, 2);
+  // تحويلها بيع وفيلا: الحقول اللي ما تنطبق تروح، وحقول البيع تنقبل
+  r = await call(h, { action: "property_save", property: { id: pid, title: "فيلا", district: "النرجس", price: 2e6,
+    deal_type: "بيع", property_type: "فيلا", details: { baths: 5, pool: true, mortgaged: true, deed: "صك إلكتروني", floor_no: "الأول", pay_period: "سنوي" } } }, "s2");
+  assert.deepEqual(T.properties.find((x) => x.id === pid).details, { baths: 5, pool: true, mortgaged: true, deed: "صك إلكتروني" });
+  // {} أو قيمة غير كائن = مسح
+  await call(h, { action: "property_save", property: { id: pid, title: "فيلا", district: "النرجس", price: 2e6, deal_type: "بيع", property_type: "فيلا", details: {} } }, "s2");
+  assert.deepEqual(T.properties.find((x) => x.id === pid).details, {});
+  await call(h, { action: "property_save", property: { id: pid, title: "فيلا", district: "النرجس", price: 2e6, deal_type: "بيع", property_type: "فيلا", details: "x" } }, "s2");
+  assert.deepEqual(T.properties.find((x) => x.id === pid).details, {});
+});
+
+await test("v19 تفاصيل العقار: مفاتيح الخادم والواجهة والبوت متطابقة", async () => {
+  const { readFileSync } = await import("node:fs");
+  const root = new URL("../../", import.meta.url).pathname;
+  const api = readFileSync(root + "supabase/functions/api/index.ts", "utf8");
+  const wa = readFileSync(root + "supabase/functions/wa-webhook/index.ts", "utf8");
+  const app = readFileSync(root + "app/src/app.js", "utf8");
+  const apiKeys = [...api.slice(api.indexOf("PROP_DETAIL_SPEC")).split("cleanDetails")[0].matchAll(/^\s*\["([a-z_]+)", "[npf]"/gm)].map((m) => m[1]);
+  const appKeys = [...app.slice(app.indexOf("var PD_GROUPS"), app.indexOf("function pdDeal")).matchAll(/\{ k: "([a-z_]+)"/g)].map((m) => m[1]);
+  const waKeys = [...wa.slice(wa.indexOf("const DETAIL_SPEC"), wa.indexOf("function detailPhrases")).matchAll(/\["([a-z_]+)", "[npf]"/g)].map((m) => m[1]);
+  assert.ok(apiKeys.length >= 25, "ما انقرأت مفاتيح الخادم");
+  assert.deepEqual([...apiKeys].sort(), [...appKeys].sort(), "الواجهة غير الخادم");
+  // البوت = الكل ما عدا الرهن والتفاوض (يبقون مع الوسيط)
+  assert.deepEqual([...waKeys].sort(), apiKeys.filter((k) => k !== "mortgaged" && k !== "negotiable").sort(), "البوت غير الخادم");
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

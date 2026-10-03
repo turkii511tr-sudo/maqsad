@@ -268,7 +268,7 @@ ${intro}
 
 وضع_المحادثة = "تدخل يدوي" في هذه الحالات فقط:
 1) طلب صريح لموظف أو وسيط أو اتصال هاتفي.
-2) سؤال عن صك أو ملكية أو عدادات أو عمر العقار أو تفاوض على السعر، أو أي سؤال تحتاج إجابته معلومة غير موجودة عندك.
+2) سؤال عن ملكية أو رهن أو تفاوض على السعر، أو أي سؤال تحتاج إجابته معلومة غير موجودة عندك. ومن ذلك تفاصيل العقار (صك، عدادات، عمر، دورات مياه، مساحة، مرافق…): تجاوب فقط إن كانت مكتوبة في «تفاصيل بعض العقارات» لعقار واحد واضح، وإلا فهي معلومة غير موجودة عندك.
 3) إساءة أو ألفاظ نابية (رد بجملة محايدة واحدة بلا جدال).
 4) رسالة بالإنجليزية بالكامل (رد بجملة إنجليزية واحدة تفيد أن ممثل المكتب سيتواصل).
 عدا ذلك = "آلي". وإذا كان الوضع الحالي "تدخل يدوي" فلا تعده إلى "آلي" إطلاقاً.
@@ -475,8 +475,13 @@ function sar(n: number) {
 }
 
 async function officeInventory(office: any) {
-  const { data, error } = await db.from("v_listable_properties")
-    .select("city,district,deal_type,property_type,price").eq("office_id", office.id).limit(300);
+  // details من migration 13؛ إذا ما انشرت بعد نرجع للأعمدة القديمة (المخزون يبقى يشتغل بلا تفاصيل)
+  let { data, error } = await db.from("v_listable_properties")
+    .select("city,district,deal_type,property_type,price,rooms,details").eq("office_id", office.id).limit(300);
+  if (error) {
+    ({ data, error } = await db.from("v_listable_properties")
+      .select("city,district,deal_type,property_type,price").eq("office_id", office.id).limit(300));
+  }
   if (error) {
     await logEvent(office.id, "warn", "inventory_failed", { error: String(error.message ?? error).slice(0, 200) });
     return [];
@@ -511,6 +516,61 @@ function inventoryText(rows: any[]) {
     lines.push(`- ${g}: ${parts.join("، ")}`);
   }
   return lines.join("\n");
+}
+
+// تفاصيل العقار الاختيارية (properties.details) كما يقرؤها العميل: المفاتيح نفسها في api (PROP_DETAIL_SPEC) والواجهة (PD_GROUPS).
+// «مرهون» و«قابل للتفاوض» ما تدخل هنا عمداً: الرهن والتفاوض على السعر يبقون مع الوسيط.
+// n = رقم (وحدة اختيارية) · p = اختيار (مع اسم الحقل أو بدونه) · f = «موجود»
+const DETAIL_SPEC: [string, "n" | "p" | "f", string, string?][] = [
+  ["area", "n", "المساحة", "م²"], ["baths", "n", "دورات المياه"], ["halls", "n", "الصالات"], ["majlis", "n", "المجالس"],
+  ["floors", "n", "الأدوار"], ["floor_no", "p", "الدور"], ["kitchen", "p", "المطبخ"],
+  ["age", "p", "العمر"], ["furnished", "p", ""], ["finish", "p", "التشطيب"], ["ac", "p", "المكيفات"],
+  ["parking", "n", "المواقف"],
+  ["elevator", "f", "مصعد"], ["garden", "f", "حوش أو حديقة"], ["pool", "f", "مسبح"], ["annex", "f", "ملحق"],
+  ["roof", "f", "سطح"], ["maid_room", "f", "غرفة خادمة"], ["driver_room", "f", "غرفة سائق"],
+  ["security", "f", "كاميرات أو أمن"], ["own_meters", "f", "عدادات كهرباء وماء مستقلة"],
+  ["facade", "p", "الواجهة"], ["street_width", "n", "عرض الشارع", "م"], ["corner", "f", "زاوية"],
+  ["pay_period", "p", "الدفع"], ["lease_min", "p", "أقل مدة للإيجار"], ["tenants", "p", ""],
+  ["utilities", "f", "الإيجار شامل الكهرباء والماء"], ["deed", "p", ""],
+];
+function detailPhrases(d: unknown): string[] {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return [];
+  const o = d as Record<string, unknown>;
+  const out: string[] = [];
+  for (const [k, kind, label, unit] of DETAIL_SPEC) {
+    const v = o[k];
+    if (kind === "n") {
+      const n = Number(v);
+      if (v != null && Number.isFinite(n) && n > 0) out.push(`${label} ${n}${unit ? ` ${unit}` : ""}`);
+    } else if (kind === "p") {
+      if (typeof v === "string" && v.trim()) out.push(label ? `${label}: ${v.slice(0, 40)}` : v.slice(0, 40));
+    } else if (v === true) out.push(label);
+  }
+  return out;
+}
+// للذكاء: أسطر بتفاصيل العقارات اللي عُبّئت (بلا اسم العقار ولا الرخصة)، ليجاوب أسئلة العميل منها
+function detailsText(rows: any[]) {
+  const multi = cityList(rows).length > 1;
+  const lines: string[] = [];
+  for (const r of rows) {
+    const ph = detailPhrases(r.details);
+    if (!ph.length) continue;
+    const rent = dealOf(r.deal_type) === "إيجار";
+    const head = [dealOf(r.deal_type), r.property_type, multi ? `${r.district} (${r.city})` : r.district,
+      `${sar(Number(r.price) || 0)}${rent ? " سنوي" : ""}`, r.rooms ? `${r.rooms} غرف` : ""].filter(Boolean).join(" · ");
+    lines.push(`- ${head}: ${ph.join("، ")}`);
+    if (lines.length >= 12) break;
+  }
+  return lines.join("\n");
+}
+// تفاصيل العقارات المطابقة للعميل (match_properties_v2 ما ترجع details): نجيبها بالمعرّف، وأي خطأ = بدون تفاصيل
+async function propDetailsOf(ids: string[]) {
+  const map = new Map<string, unknown>();
+  if (!ids.length) return map;
+  const { data, error } = await db.from("v_listable_properties").select("id,details").in("id", ids);
+  if (error) return map;
+  for (const r of data ?? []) map.set(String(r.id), r.details);
+  return map;
 }
 
 // الحقول النصية في رد الذكاء ترجع لها القيم الحقيقية
@@ -569,16 +629,18 @@ async function callModel(office: any, key: string, model: string, messages: unkn
   return JSON.parse(j.choices[0].message.content);
 }
 
-function formatProperties(rows: any[]) {
+function formatProperties(rows: any[], details: Map<string, unknown> = new Map()) {
   return rows
-    .map((p) =>
-      [
+    .map((p) => {
+      const ph = detailPhrases(details.get(String(p.id)));
+      return [
         `🏠 ${p.title}`,
         `📍 ${p.district}${p.city ? `، ${p.city}` : ""}${p.rooms ? ` · ${p.rooms} غرف` : ""}`,
+        ...(ph.length ? [`✨ ${ph.slice(0, 8).join(" · ")}`] : []),
         `💰 ${Number(p.price).toLocaleString("en-US")} ريال`,
         `🔖 ترخيص إعلان ${p.ad_license_no}`,
-      ].join("\n")
-    )
+      ].join("\n");
+    })
     .join("\n\n");
 }
 
@@ -909,7 +971,10 @@ async function processTurn(
   const returning = !!c.handed_at && (c.status === "qualified" || reopened);
   const ctx: TurnCtx = {
     history,
-    inventory: canList ? (inventoryText(stock) || "لا يوجد عقار معروض حالياً") : "",
+    inventory: canList
+      ? (inventoryText(stock) || "لا يوجد عقار معروض حالياً") +
+        (detailsText(stock) ? `\n\nتفاصيل بعض العقارات (استخدمها فقط للإجابة عن سؤال العميل، ولعقار واحد واضح الحي والنوع والسعر):\n${detailsText(stock)}` : "")
+      : "",
     scope: cities.length === 1 ? `مدينة واحدة: ${cities[0]}` : multiCity ? `أكثر من مدينة: ${cities.join("، ")}` : "",
     returning: returning
       ? `${c.status === "qualified" ? "طلب سابق مكتمل سُلّم للمستشار" : "طلب سابق غير مكتمل سُلّم للمستشار"}: ${[c.deal_type, c.property_type, c.city, c.location,
@@ -1014,13 +1079,14 @@ async function processTurn(
     const alternatives = rows.length > 0 && inArea.length === 0;
     if (!alternatives) rows = inArea;
 
+    const pdets = canList && rows.length ? await propDetailsOf(rows.map((p: any) => String(p.id))) : new Map<string, unknown>();
     outgoing = !canList
       ? `${outgoing}\n\n${LICENSE_HOLD}`
       : alternatives
       ? `${outgoing}\n\nما عندنا حالياً في ${districts.join(" أو ")} شي يناسب طلبك بالضبط، وهذي أقرب الخيارات المتوفرة:\n\n` +
-        `${formatProperties(rows)}\n\nالمستشار العقاري بيتواصل معك بخيارات إضافية ولترتيب المعاينة.`
+        `${formatProperties(rows, pdets)}\n\nالمستشار العقاري بيتواصل معك بخيارات إضافية ولترتيب المعاينة.`
       : rows.length
-      ? `${outgoing}\n\nهذي خيارات متوفرة عندنا تناسب طلبك:\n\n${formatProperties(rows)}\n\nالمستشار العقاري بيتواصل معك لترتيب المعاينة.`
+      ? `${outgoing}\n\nهذي خيارات متوفرة عندنا تناسب طلبك:\n\n${formatProperties(rows, pdets)}\n\nالمستشار العقاري بيتواصل معك لترتيب المعاينة.`
       : `${outgoing}\n\n${NO_MATCH}`;
 
     Object.assign(patch, handoff("qualified"));

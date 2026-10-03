@@ -129,3 +129,13 @@ select * from public.build_app();   -- يعيد الحجم وmd5 للنسخة ا
      v17 نزلت بدون `staff.id` فكان فلتر «عملائي» يطلع فاضي وعلامة «لك» ما تظهر؛ أُصلح في v18 ومعه اختبار في `api.test.mjs` و`app/tests/v17.test.js`.
   3. الواجهة: `mkpatch.py` (index.html → `01b8d12f…`، app.js → `7d49cb6e…`) ثم `build_app()` = `30398e41…`، مطابق لـ `python3 app/build.py` محلياً. بعدها `login_start` = 200.
 - **باقي يدوي:** رفع الموقع على Netlify (الشبكة هنا تمنع netlify.com).
+
+## ١٣) تفاصيل العقار الاختيارية (٣ أكتوبر ٢٠٢٦) — جاهزة في المستودع، **غير منشورة** (تنتظر موافقة صاحب المشروع)
+
+دورات المياه، المساحة، العمر، الفرش، المرافق، الواجهة والشارع، وشروط الإيجار والبيع. كلها اختيارية.
+ترتيب النشر (لا تعكسه: `api` الجديدة تكتب عمود `details`، والـview لازم يرجّعه قبل البوت):
+1. `13_property_details.sql` باسم `property_details` (إضافات فقط: عمود `properties.details` jsonb بقيمة افتراضية `{}` + إعادة تعريف `v_listable_properties` بالعمود في آخره، شرط الترخيص ما تغيّر). بعدها `login_start` حي = 200.
+2. `api` ثم `wa-webhook` (مع `notify.ts` كالعادة). `wa-webhook` قبل الـ migration آمن: يرجع للأعمدة القديمة بلا تفاصيل. `get_edge_function` ومطابقة حرفية.
+3. الواجهة: `mkpatch.py` ثم `select * from public.build_app();`. بعدها `login_start` حي = 200.
+
+عقار حي قبل الـ migration يأخذ `details = {}` (غير معروف) ولا شي يتغير في عرضه.

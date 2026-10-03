@@ -82,6 +82,7 @@ async function addProp(p) {
   const lic = await p.$('#wzLic'); if (lic) { await p.fill('#wzLic', '7200034512'); }
   const exp = await p.$('#wzExp'); if (exp) { await p.fill('#wzExp', inDays(90)); }
   await p.click('#wzNext');
+  await p.click('#wzNext');   // تفاصيل العقار (تخطي)
   await p.click('#wzNext');
 }
 

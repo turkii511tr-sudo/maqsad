@@ -24,7 +24,8 @@ create or replace view public.v_listable_properties as
     ad_license_expiry,
     images,
     notes,
-    created_at
+    created_at,
+    details
    FROM properties
   WHERE state = 'available'::prop_state AND ad_license_no IS NOT NULL AND btrim(ad_license_no) <> ''::text AND ad_license_expiry IS NOT NULL AND ad_license_expiry >= CURRENT_DATE;
 

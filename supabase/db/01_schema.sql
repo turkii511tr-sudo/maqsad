@@ -222,7 +222,8 @@ create table public.properties (
   ad_license_expiry date,
   images text[] not null default '{}'::text[],
   notes text,
-  created_at timestamp with time zone not null default now()
+  created_at timestamp with time zone not null default now(),
+  details jsonb not null default '{}'::jsonb
 );
 
 create table public.push_subs (
