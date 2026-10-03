@@ -29,6 +29,7 @@ export function makeDb(seed) {
     neq(c, v) { this.f.push((r) => r[c] !== v); return this; }
     is(c, v) { this.f.push((r) => (r[c] ?? null) === v); return this; }
     gte(c, v) { this.f.push((r) => String(r[c]) >= String(v)); return this; }
+    lte(c, v) { this.f.push((r) => String(r[c]) <= String(v)); return this; }
     in(c, vs) { this.f.push((r) => vs.includes(r[c])); return this; }
     // or("a.ilike.%x%,b.ilike.%y%") كما في PostgREST (ilike فقط)
     or(expr) {

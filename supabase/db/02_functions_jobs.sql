@@ -615,6 +615,7 @@ revoke all on function tg_register() from public;
 
 select cron.schedule('maqsad-backup-daily', '0 0 * * *', 'select public.call_edge(''backup'')');
 select cron.schedule('maqsad-fal-check', '0 6 * * *', 'select public.call_edge(''fal-check'')');
+select cron.schedule('maqsad-stock-check', '30 6 * * *', 'select public.call_edge(''stock-check'')');
 select cron.schedule('maqsad-housekeeping', '30 0 * * *', 'select public.housekeeping()');
 select cron.schedule('maqsad-monthly-report', '0 5 1 * *', 'select public.call_edge(''monthly-report'')');
 select cron.schedule('maqsad-warm', '*/4 * * * *', '
